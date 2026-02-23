@@ -1,0 +1,34 @@
+{
+    "name": "UniPeek.Editor",
+    "rootNamespace": "UniPeek",
+    "references": [
+        "GUID:75469ad4d38634e559750d17036d5f7c",
+        "GUID:a10a7408f1036a74baaa98d49d9f3902",
+        "GUID:478a2357cc57436488a56e564b08d223"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": true,
+    "precompiledReferences": [
+        "websocket-sharp.dll",
+        "QRCoder.dll"
+    ],
+    "autoReferenced": false,
+    "defineConstraints": [],
+    "versionDefines": [
+        {
+            "name": "com.unity.inputsystem",
+            "expression": "1.0.0",
+            "define": "ENABLE_INPUT_SYSTEM"
+        },
+        {
+            "name": "com.unity.webrtc",
+            "expression": "3.0.0",
+            "define": "UNITY_WEBRTCX"
+        }
+    ],
+    "noEngineReferences": false
+}
