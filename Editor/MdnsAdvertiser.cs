@@ -71,6 +71,16 @@ namespace UniPeek
                     MulticastAddress,
                     IPAddress.Parse(_localIp));
 
+                // CRITICAL: set the SEND interface too.
+                // JoinMulticastGroup only controls which interface *receives* multicast.
+                // Without this, on Windows with multiple NICs (WiFi + Ethernet + VPN),
+                // outbound mDNS packets go out the default-route interface, not _localIp,
+                // so devices on the LAN never see the announcements.
+                _client.Client.SetSocketOption(
+                    SocketOptionLevel.IP,
+                    SocketOptionName.MulticastInterface,
+                    IPAddress.Parse(_localIp).GetAddressBytes());
+
                 _client.MulticastLoopback = true;
                 _client.Ttl = 255;
             }
@@ -87,33 +97,31 @@ namespace UniPeek
         }
 
         // ─────────────────────────────────────────────
-        // STOP (with proper goodbye)
+        // STOP (synchronous — guaranteed before return)
         // ─────────────────────────────────────────────
-        public async void Stop()
+        public void Stop()
         {
-            try
-            {
-                if (_client != null)
-                {
-                    await SendGoodbyeBurst();
-                }
-            }
-            catch { }
+            // Cancel background loops first so AnnounceLoop can't race with our goodbye.
+            try { _cts?.Cancel(); } catch { }
 
-            try
-            {
-                _cts?.Cancel();
-            }
-            catch { }
-
-            try
-            {
-                _client?.Close();
-                _client?.Dispose();
-            }
-            catch { }
-
+            var client = _client;
             _client = null;
+
+            if (client != null)
+            {
+                // Send goodbye (TTL=0) synchronously — three back-to-back packets,
+                // no delays, so the socket is guaranteed closed before we return.
+                try
+                {
+                    byte[] goodbye = BuildPacket(ttlOverride: 0);
+                    var endpoint   = new IPEndPoint(MulticastAddress, MdnsPort);
+                    for (int i = 0; i < 3; i++)
+                        client.Send(goodbye, goodbye.Length, endpoint);
+                }
+                catch { }
+
+                try { client.Close(); client.Dispose(); } catch { }
+            }
 
             Debug.Log("[mDNS] Stopped");
         }
@@ -135,8 +143,6 @@ namespace UniPeek
                         packet,
                         packet.Length,
                         new IPEndPoint(MulticastAddress, MdnsPort));
-
-                    Debug.Log("[mDNS] Sent announcement");
                 }
                 catch (Exception e)
                 {
@@ -160,7 +166,8 @@ namespace UniPeek
                 try { result = await _client.ReceiveAsync(); }
                 catch { break; }
 
-                HandleQuery(result.Buffer, result.RemoteEndPoint);
+                try { HandleQuery(result.Buffer, result.RemoteEndPoint); }
+                catch (Exception e) { Debug.LogWarning("[mDNS] HandleQuery error: " + e.Message); }
             }
         }
 
@@ -196,52 +203,6 @@ namespace UniPeek
                 byte[] packet = BuildPacket();
 
                 _client.Send(packet, packet.Length, target);
-
-                Debug.Log($"[mDNS] Responded to query from {remote}");
-            }
-        }
-
-        // ─────────────────────────────────────────────
-        // GOODBYE (Apple-style burst)
-        // ─────────────────────────────────────────────
-        private async Task SendGoodbyeBurst()
-        {
-            var client = _client;
-
-            if (client == null)
-            {
-                Debug.Log("[mDNS] Goodbye skipped (client null)");
-                return;
-            }
-
-            var endpoint = new IPEndPoint(IPAddress.Parse("224.0.0.251"), 5353);
-
-            if (client == null || endpoint == null)
-            {
-                Debug.Log("[mDNS] Goodbye skipped (not initialized)");
-                return;
-            }
-
-            try
-            {
-                byte[] packet = BuildPacket(ttlOverride: 0);
-
-                // Apple-style: send 3 times
-                for (int i = 0; i < 3; i++)
-                {
-                    await client.SendAsync(packet, packet.Length, endpoint);
-                    await Task.Delay(120);
-                }
-
-                Debug.Log("[mDNS] Goodbye sent");
-            }
-            catch (ObjectDisposedException)
-            {
-                Debug.Log("[mDNS] Goodbye skipped (socket disposed)");
-            }
-            catch (Exception e)
-            {
-                Debug.LogWarning("[mDNS] Goodbye failed: " + e.Message);
             }
         }
 
@@ -356,14 +317,23 @@ namespace UniPeek
         {
             var labels = new List<string>();
 
-            while (data[offset] != 0)
+            while (offset < data.Length && data[offset] != 0)
             {
+                // DNS pointer compression: high two bits are 0xC0
+                if ((data[offset] & 0xC0) == 0xC0)
+                {
+                    // Skip the 2-byte pointer; don't follow it (we only need the name for filtering)
+                    offset += 2;
+                    return string.Join(".", labels);
+                }
+
                 int len = data[offset++];
+                if (offset + len > data.Length) break;
                 labels.Add(Encoding.ASCII.GetString(data, offset, len));
                 offset += len;
             }
 
-            offset++;
+            if (offset < data.Length) offset++; // consume terminating zero
             return string.Join(".", labels);
         }
     }

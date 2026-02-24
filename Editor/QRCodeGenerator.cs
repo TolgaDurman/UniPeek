@@ -18,7 +18,7 @@ namespace UniPeek
     public static class QRCodeGenerator
     {
         // ── Internal state ────────────────────────────────────────────────────
-        private static string   _lastIp;
+        private static string _lastIp;
         private static Texture2D _cachedTexture;
 
         // ── Public API ────────────────────────────────────────────────────────
@@ -63,7 +63,9 @@ namespace UniPeek
                 {
                     if (addr.AddressFamily == AddressFamily.InterNetwork &&
                         !IPAddress.IsLoopback(addr))
+                    {
                         return addr.ToString();
+                    }
                 }
             }
             catch (Exception ex)
@@ -100,8 +102,8 @@ namespace UniPeek
             try
             {
                 using var generator = new global::QRCoder.QRCodeGenerator();
-                using var data      = generator.CreateQrCode(payload, global::QRCoder.QRCodeGenerator.ECCLevel.Q);
-                using var code      = new QRCode(data);
+                using var data = generator.CreateQrCode(payload, global::QRCoder.QRCodeGenerator.ECCLevel.Q);
+                using var code = new QRCode(data);
 
                 System.Drawing.Bitmap bmp = code.GetGraphic(pixelsPerModule);
                 return BitmapToTexture2D(bmp);
@@ -139,7 +141,7 @@ namespace UniPeek
             var tex = new Texture2D(w, h, TextureFormat.RGBA32, false)
             {
                 filterMode = FilterMode.Point,  // keep QR dots crisp
-                wrapMode   = TextureWrapMode.Clamp,
+                wrapMode = TextureWrapMode.Clamp,
             };
 
             for (int y = 0; y < h; y++)

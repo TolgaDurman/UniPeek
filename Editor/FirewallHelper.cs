@@ -1,5 +1,6 @@
 using System;
 using System.Diagnostics;
+using System.IO;
 using UnityEditor;
 
 namespace UniPeek
@@ -7,9 +8,11 @@ namespace UniPeek
     /// <summary>
     /// Manages OS-level firewall rules required for the UniPeek WebSocket server.
     /// <para>
-    /// On <b>Windows</b>: adds a permanent inbound TCP rule via <c>netsh</c> with a
-    /// one-time UAC elevation prompt, then records completion in <see cref="EditorPrefs"/>
-    /// so the rule is never added twice.
+    /// On <b>Windows</b>: uses an elevated PowerShell script to:
+    /// (1) remove any application-level block rules Windows auto-created when the
+    ///     "Allow Unity through firewall?" prompt was dismissed, and
+    /// (2) add a port-based allow rule for UniPeek.
+    /// The result is persisted in <see cref="EditorPrefs"/> so setup only runs once.
     /// </para>
     /// <para>
     /// On <b>macOS / Linux</b>: no-op — the OS automatically prompts the user when
@@ -23,9 +26,8 @@ namespace UniPeek
 
         /// <summary>
         /// Ensures an inbound firewall rule exists for <paramref name="port"/>.
-        /// On Windows the <c>netsh</c> command is run with UAC elevation the first time;
-        /// subsequent calls return immediately because the result is persisted in
-        /// <see cref="EditorPrefs"/>.
+        /// On Windows, runs an elevated PowerShell script the first time and persists
+        /// the result in <see cref="EditorPrefs"/> so it never runs twice.
         /// </summary>
         /// <param name="port">TCP port to open (defaults to <see cref="UniPeekConstants.DefaultPort"/>).</param>
         public static void EnsureFirewallRule(int port = UniPeekConstants.DefaultPort)
@@ -36,6 +38,18 @@ namespace UniPeek
 
             AddWindowsFirewallRule(port);
 #endif
+        }
+
+        /// <summary>
+        /// Clears the stored flag and immediately re-runs firewall setup.
+        /// Use this from the UniPeek window or the menu item below to test
+        /// the setup flow on your own machine.
+        /// </summary>
+        [MenuItem("Window/UniPeek/Reset Firewall Setup")]
+        public static void ResetAndReConfigure()
+        {
+            ResetFlag();
+            EnsureFirewallRule(UniPeekConstants.DefaultPort);
         }
 
         /// <summary>
@@ -54,32 +68,68 @@ namespace UniPeek
         {
             try
             {
-                string args =
-                    $"advfirewall firewall add rule " +
-                    $"name=\"{RuleName}\" " +
-                    $"dir=in action=allow protocol=TCP localport={port}";
+                // Get the currently-running Unity Editor executable path so we can
+                // clear any app-level block rule Windows created when the "Allow Unity
+                // through firewall?" prompt was previously dismissed or cancelled.
+                string unityExe = Process.GetCurrentProcess().MainModule?.FileName
+                                  ?? string.Empty;
 
-                var psi = new ProcessStartInfo("netsh", args)
+                // Escape single quotes for PowerShell string literals.
+                string safeExe  = unityExe.Replace("'", "''");
+
+                // PowerShell script (written to a temp file to avoid cmd-line escaping issues):
+                //   1. Remove any inbound block rules targeting this Unity executable.
+                //   2. Remove stale UniPeek port rules (idempotent re-run safety).
+                //   3. Add a fresh port-based allow rule covering all profiles.
+                string script =
+                    "# Step 1 – remove block rules Windows auto-created for Unity Editor\n" +
+                    $"$exe = '{safeExe}'\n" +
+                    "Get-NetFirewallRule -Direction Inbound -Action Block -ErrorAction SilentlyContinue | ForEach-Object {\n" +
+                    "    $filter = $_ | Get-NetFirewallApplicationFilter -ErrorAction SilentlyContinue\n" +
+                    "    if ($filter -and $filter.Program -eq $exe) { Remove-NetFirewallRule -Name $_.Name }\n" +
+                    "}\n" +
+                    $"# Step 2 – remove stale UniPeek rules\n" +
+                    $"Remove-NetFirewallRule -DisplayName '{RuleName}' -ErrorAction SilentlyContinue\n" +
+                    $"# Step 3 – add allow rule\n" +
+                    $"New-NetFirewallRule -DisplayName '{RuleName}' -Direction Inbound " +
+                    $"-Action Allow -Protocol TCP -LocalPort {port} -Profile Any | Out-Null\n";
+
+                string tmpScript = Path.Combine(Path.GetTempPath(), "unipeek_fw.ps1");
+                File.WriteAllText(tmpScript, script);
+
+                var psi = new ProcessStartInfo(
+                    "powershell.exe",
+                    $"-NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"{tmpScript}\"")
                 {
-                    UseShellExecute  = true,
-                    Verb             = "runas",   // triggers one-time UAC elevation
-                    WindowStyle      = ProcessWindowStyle.Hidden,
-                    CreateNoWindow   = true,
+                    UseShellExecute = true,
+                    Verb            = "runas",   // one-time UAC elevation
+                    WindowStyle     = ProcessWindowStyle.Hidden,
+                    CreateNoWindow  = true,
                 };
 
                 using var proc = Process.Start(psi);
-                proc?.WaitForExit(8000);
+                proc?.WaitForExit(10000);
+
+                try { File.Delete(tmpScript); } catch { /* best-effort cleanup */ }
+
+                if (proc?.ExitCode != 0)
+                {
+                    UniPeekConstants.LogWarning(
+                        $"[Firewall] Setup may not have completed (PowerShell exit {proc?.ExitCode}). " +
+                        "UAC may have been denied. Will retry on next Start.");
+                    return;
+                }
 
                 EditorPrefs.SetBool(PrefKey, true);
-                UniPeekConstants.Log($"Windows firewall rule '{RuleName}' added for TCP port {port}.");
+                UniPeekConstants.Log($"[Firewall] Rule '{RuleName}' configured for TCP {port} on all profiles.");
             }
             catch (Exception ex)
             {
                 UniPeekConstants.LogWarning(
-                    $"Could not add firewall rule automatically: {ex.Message}. " +
-                    "You may need to add it manually:\n" +
-                    $"  netsh advfirewall firewall add rule name=\"{RuleName}\" " +
-                    $"dir=in action=allow protocol=TCP localport={port}");
+                    $"[Firewall] Could not configure automatically: {ex.Message}\n" +
+                    "Run this in an elevated PowerShell:\n" +
+                    $"  New-NetFirewallRule -DisplayName \"{RuleName}\" -Direction Inbound " +
+                    $"-Action Allow -Protocol TCP -LocalPort {port} -Profile Any");
             }
         }
 #endif

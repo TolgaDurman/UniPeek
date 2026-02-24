@@ -40,6 +40,10 @@ namespace UniPeek
         private bool _autoStopOnPlay;
         private bool _autoStopOnFocusLoss;
 
+        // EditorPrefs key for the "start streaming once play mode is fully entered" flag.
+        // Using EditorPrefs instead of a field because a domain reload wipes all fields.
+        private const string PrefPendingStart = "UniPeek_PendingStart";
+
         // ── Runtime state ─────────────────────────────────────────────────────
         private bool   _streaming;
         private float  _captureFps;
@@ -69,7 +73,7 @@ namespace UniPeek
         // ─────────────────────────────────────────────────────────────────────
 
         /// <summary>Opens the UniPeek window docked next to the Inspector.</summary>
-        [MenuItem("Window/UniPeek")]
+        [MenuItem("Window/UniPeek/Open")]
         public static void ShowWindow()
         {
             var logoTex = AssetDatabase.LoadAssetAtPath<Texture2D>(
@@ -97,6 +101,16 @@ namespace UniPeek
                 "Assets/Plugins/UniPeek/Textures/unipeek-logo.png");
 
             EditorApplication.playModeStateChanged += OnPlayModeChanged;
+
+            // After a domain reload the EditorWindow is recreated while Unity is already
+            // in play mode.  EnteredPlayMode may have fired before OnEnable ran, so we
+            // check the pending flag here as well as in OnPlayModeChanged — whichever
+            // runs first claims the flag via DeleteKey, the other is a no-op.
+            if (Application.isPlaying && EditorPrefs.GetBool(PrefPendingStart, false))
+            {
+                EditorPrefs.DeleteKey(PrefPendingStart);
+                DoStartStreaming();
+            }
         }
 
         private void OnDisable()
@@ -120,6 +134,14 @@ namespace UniPeek
 
         private void OnPlayModeChanged(PlayModeStateChange state)
         {
+            // Resume streaming that was deferred until after the domain reload.
+            if (state == PlayModeStateChange.EnteredPlayMode && EditorPrefs.GetBool(PrefPendingStart, false))
+            {
+                EditorPrefs.DeleteKey(PrefPendingStart);
+                DoStartStreaming();
+                return;
+            }
+
             // Stop streaming whenever play mode ends (user pressed Stop or domain reload)
             if (_streaming && state == PlayModeStateChange.ExitingPlayMode)
                 StopStreaming();
@@ -379,10 +401,7 @@ namespace UniPeek
                 Application.OpenURL("https://github.com/your-org/UniPeek#readme");
 
             if (GUILayout.Button("Reset FW", EditorStyles.toolbarButton, GUILayout.Width(56f)))
-            {
-                FirewallHelper.ResetFlag();
-                UniPeekConstants.Log("Firewall flag reset. Will prompt again on next Start.");
-            }
+                FirewallHelper.ResetAndReConfigure();
         }
 
         // ── Style / utility helpers ────────────────────────────────────────────
@@ -426,7 +445,28 @@ namespace UniPeek
         {
             if (_streaming) return;
 
-            // Apply settings to ConnectionManager before starting
+            // Persist settings so they survive a domain reload.
+            SavePrefs();
+            Application.runInBackground = true;
+
+            if (!EditorApplication.isPlaying)
+            {
+                // Setting isPlaying triggers a domain reload which destroys the
+                // ConnectionManager singleton and all its background threads before
+                // streaming would even begin.  Instead, plant a flag in EditorPrefs
+                // (which survives the reload) and finish starting inside EnteredPlayMode /
+                // OnEnable — whichever fires first after the domain is back up.
+                EditorPrefs.SetBool(PrefPendingStart, true);
+                EditorApplication.isPlaying = true;
+                return;
+            }
+
+            // Already in play mode — no domain reload, start immediately.
+            DoStartStreaming();
+        }
+
+        private void DoStartStreaming()
+        {
             var (w, h) = Resolutions[_resolutionIdx];
             int quality = QualityValues[_qualityIdx];
             int fps     = FpsValues[_fpsIdx];
@@ -435,13 +475,7 @@ namespace UniPeek
             ConnectionManager.Instance.StartStreaming();
             _streaming = true;
 
-            // Keep the game loop running even when the editor loses OS focus
             Application.runInBackground = true;
-
-            // Enter Play mode so ScreenCapture works and the game runs
-            if (!EditorApplication.isPlaying)
-                EditorApplication.isPlaying = true;
-
             RefreshQR();
             Repaint();
         }
