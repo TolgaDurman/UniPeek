@@ -1,4 +1,5 @@
 using System;
+using UnityEditor;
 using UnityEngine;
 
 #if ENABLE_INPUT_SYSTEM
@@ -92,6 +93,7 @@ namespace UniPeek
         private static Touchscreen _touchscreen;
         private static AttitudeSensor _attitudeSensor;
         private static Accelerometer _accelerometer;
+        private static readonly System.Collections.Generic.HashSet<int> _activeTouchIds = new();
 
         /// <summary>
         /// Ensures synthetic virtual devices exist and are enabled.
@@ -127,6 +129,7 @@ namespace UniPeek
             if (_touchscreen != null)   { InputSystem.RemoveDevice(_touchscreen);   _touchscreen   = null; }
             if (_attitudeSensor != null){ InputSystem.RemoveDevice(_attitudeSensor); _attitudeSensor = null; }
             if (_accelerometer != null) { InputSystem.RemoveDevice(_accelerometer);  _accelerometer  = null; }
+            _activeTouchIds.Clear();
         }
 
         private static void InjectTouchNewInputSystem(string phase, float screenX, float screenY, int fingerId)
@@ -145,13 +148,61 @@ namespace UniPeek
 
             if (inputPhase == UnityEngine.InputSystem.TouchPhase.None) return;
 
-            var touch = new TouchState
+            int touchId = fingerId + 1;  // Unity touchId is 1-based
+            var pos = new Vector2(screenX, screenY);
+
+            bool isEnd = inputPhase == UnityEngine.InputSystem.TouchPhase.Ended ||
+                         inputPhase == UnityEngine.InputSystem.TouchPhase.Canceled;
+
+            // The phone app may skip "began"/"moved" and only send "ended" for quick taps.
+            // The Input System ignores an "ended" with no prior "began", so synthesize one.
+            if (isEnd && !_activeTouchIds.Contains(touchId))
             {
-                touchId  = fingerId + 1,  // Unity touchId is 1-based
+                _activeTouchIds.Add(touchId);
+                InputSystem.QueueStateEvent(_touchscreen, new TouchState
+                {
+                    touchId  = touchId,
+                    phase    = UnityEngine.InputSystem.TouchPhase.Began,
+                    position = pos,
+                });
+            }
+
+            // Track which touchIds are currently open.
+            if (inputPhase == UnityEngine.InputSystem.TouchPhase.Began)
+                _activeTouchIds.Add(touchId);
+            else if (isEnd)
+                _activeTouchIds.Remove(touchId);
+
+            // Defer Ended/Canceled to the next editor frame.
+            // InputSystemUIInputModule needs to process Began (→ PointerDown) in one
+            // frame and Ended (→ PointerUp → onClick) in the next, otherwise both
+            // events land in the same InputSystem.Update() call and the UI module
+            // never establishes a pressed state before releasing it.
+            if (isEnd)
+            {
+                var ts    = _touchscreen;
+                var id    = touchId;
+                var ph    = inputPhase;
+                var p     = pos;
+                EditorApplication.delayCall += () =>
+                {
+                    if (ts == null) return;
+                    InputSystem.QueueStateEvent(ts, new TouchState
+                    {
+                        touchId  = id,
+                        phase    = ph,
+                        position = p,
+                    });
+                };
+                return;
+            }
+
+            InputSystem.QueueStateEvent(_touchscreen, new TouchState
+            {
+                touchId  = touchId,
                 phase    = inputPhase,
-                position = new Vector2(screenX, screenY),
-            };
-            InputSystem.QueueStateEvent(_touchscreen, touch);
+                position = pos,
+            });
         }
 
         private static void InjectGyroNewInputSystem(float x, float y, float z)
@@ -161,7 +212,7 @@ namespace UniPeek
             // (exact device support depends on the Input System version).
             // Queue a no-op attitude update — full gyro integration requires
             // a more complex state struct; this stub keeps the API consistent.
-            UniPeekConstants.Log($"[InputInjector] Gyro (new IS): {x:F3}, {y:F3}, {z:F3}");
+            //UniPeekConstants.Log($"[InputInjector] Gyro (new IS): {x:F3}, {y:F3}, {z:F3}");
         }
 
         private static void InjectAccelNewInputSystem(float x, float y, float z)
