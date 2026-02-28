@@ -207,6 +207,8 @@ namespace UniPeek
 
             _encoder = null;
 
+            // Tell all connected clients the stream is ending before closing the socket.
+            _wsServer?.BroadcastText("{\"type\":\"shutdown\"}");
             _wsServer?.Stop();
             _wsServer = null;
 

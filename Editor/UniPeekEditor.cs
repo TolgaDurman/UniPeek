@@ -15,29 +15,8 @@ namespace UniPeek
     /// </summary>
     public sealed class UniPeekWindow : EditorWindow
     {
-        // ── Resolution options ────────────────────────────────────────────────
-        private static readonly string[] ResolutionLabels = { "540p", "720p", "1080p" };
-        private static readonly (int w, int h)[] Resolutions =
-        {
-            (960,  540),
-            (1280, 720),
-            (1920, 1080),
-        };
-
-        // ── Quality options ───────────────────────────────────────────────────
-        private static readonly string[] QualityLabels =
-            { "Performance (50)", "Balanced (75)", "Quality (85)", "Ultra (92)" };
-        private static readonly int[] QualityValues = { 50, 75, 85, 92 };
-
-        // ── FPS cap options ───────────────────────────────────────────────────
-        private static readonly string[] FpsLabels  = { "10 fps", "20 fps", "30 fps", "60 fps" };
-        private static readonly int[]    FpsValues   = { 10, 20, 30, 60 };
-
         // ── Persistent settings ───────────────────────────────────────────────
-        private int  _resolutionIdx;
-        private int  _qualityIdx;
-        private int  _fpsIdx;
-        private bool _autoStopOnPlay;
+        private bool _requirePlayMode;
         private bool _autoStopOnFocusLoss;
 
         // EditorPrefs key for the "start streaming once play mode is fully entered" flag.
@@ -111,6 +90,12 @@ namespace UniPeek
                 EditorPrefs.DeleteKey(PrefPendingStart);
                 DoStartStreaming();
             }
+            // Persist mode: if "Only run in Play Mode" is OFF and streaming was active,
+            // auto-restart after any domain reload (play mode enter or exit).
+            else if (!_requirePlayMode && EditorPrefs.GetBool(UniPeekConstants.PrefPersistStreaming, false))
+            {
+                DoStartStreaming();
+            }
         }
 
         private void OnDisable()
@@ -142,8 +127,19 @@ namespace UniPeek
                 return;
             }
 
-            // Stop streaming whenever play mode ends (user pressed Stop or domain reload)
-            if (_streaming && state == PlayModeStateChange.ExitingPlayMode)
+            // Persist mode fallback: if OnEnable already ran and started streaming,
+            // _streaming is true and this is a no-op; otherwise catch the case where
+            // OnEnable fires first, subscribes this handler, then EnteredPlayMode fires.
+            if (state == PlayModeStateChange.EnteredPlayMode
+                && !_requirePlayMode && !_streaming
+                && EditorPrefs.GetBool(UniPeekConstants.PrefPersistStreaming, false))
+            {
+                DoStartStreaming();
+                return;
+            }
+
+            // Stop streaming when play mode ends — only if the toggle requires it.
+            if (_requirePlayMode && _streaming && state == PlayModeStateChange.ExitingPlayMode)
                 StopStreaming();
         }
 
@@ -279,19 +275,22 @@ namespace UniPeek
         {
             EditorGUI.BeginChangeCheck();
 
-            using (new EditorGUI.DisabledGroupScope(_streaming))
-            {
-                _resolutionIdx = EditorGUILayout.Popup("Resolution", _resolutionIdx, ResolutionLabels);
-                _qualityIdx    = EditorGUILayout.Popup("Quality",    _qualityIdx,    QualityLabels);
-                _fpsIdx        = EditorGUILayout.Popup("FPS Cap",    _fpsIdx,        FpsLabels);
-            }
-
-            GUILayout.Space(2f);
-            _autoStopOnPlay      = EditorGUILayout.Toggle("Stop on Play Mode",  _autoStopOnPlay);
+            _requirePlayMode     = EditorGUILayout.Toggle("Only run in Play Mode", _requirePlayMode);
             _autoStopOnFocusLoss = EditorGUILayout.Toggle("Stop on Focus Loss", _autoStopOnFocusLoss);
 
             if (EditorGUI.EndChangeCheck())
                 SavePrefs();
+
+            if (!_requirePlayMode)
+            {
+            GUILayout.Space(4f);
+            EditorGUILayout.HelpBox(
+                "Recompiling scripts will cut the connection. Pro users have an automatic " +
+                "reconnect option. If 'Only run in Play Mode' is disabled, enabling it is " +
+                "recommended to avoid interruptions. Resolution, quality, and FPS are " +
+                "configured from the app.",
+                MessageType.Info);
+            }
         }
 
         private void DrawStatsBar()
@@ -449,7 +448,7 @@ namespace UniPeek
             SavePrefs();
             Application.runInBackground = true;
 
-            if (!EditorApplication.isPlaying)
+            if (_requirePlayMode && !EditorApplication.isPlaying)
             {
                 // Setting isPlaying triggers a domain reload which destroys the
                 // ConnectionManager singleton and all its background threads before
@@ -461,19 +460,19 @@ namespace UniPeek
                 return;
             }
 
-            // Already in play mode — no domain reload, start immediately.
+            // Either already in play mode, or not requiring play mode — start immediately.
             DoStartStreaming();
         }
 
         private void DoStartStreaming()
         {
-            var (w, h) = Resolutions[_resolutionIdx];
-            int quality = QualityValues[_qualityIdx];
-            int fps     = FpsValues[_fpsIdx];
-            ConnectionManager.Instance.ApplyConfig(w, h, quality, fps);
-
             ConnectionManager.Instance.StartStreaming();
             _streaming = true;
+
+            // Mark streaming as persistent so it auto-restarts after domain reloads
+            // when "Only run in Play Mode" is OFF.
+            if (!_requirePlayMode)
+                EditorPrefs.SetBool(UniPeekConstants.PrefPersistStreaming, true);
 
             Application.runInBackground = true;
             RefreshQR();
@@ -485,6 +484,7 @@ namespace UniPeek
             if (!_streaming) return;
             ConnectionManager.Instance.StopStreaming();
             _streaming = false;
+            EditorPrefs.DeleteKey(UniPeekConstants.PrefPersistStreaming);
             _captureFps = 0f;
             _encodeMs   = 0f;
             DestroyQR();
@@ -559,19 +559,13 @@ namespace UniPeek
 
         private void LoadPrefs()
         {
-            _resolutionIdx       = EditorPrefs.GetInt(UniPeekConstants.PrefResolution, 1); // default 720p
-            _qualityIdx          = EditorPrefs.GetInt(UniPeekConstants.PrefQuality,    1); // default Balanced
-            _fpsIdx              = EditorPrefs.GetInt(UniPeekConstants.PrefFpsCap,     2); // default 30 fps
-            _autoStopOnPlay      = EditorPrefs.GetBool(UniPeekConstants.PrefAutoStopPlay,  true);
+            _requirePlayMode     = EditorPrefs.GetBool(UniPeekConstants.PrefAutoStopPlay,  true);
             _autoStopOnFocusLoss = EditorPrefs.GetBool(UniPeekConstants.PrefAutoStopFocus, false);
         }
 
         private void SavePrefs()
         {
-            EditorPrefs.SetInt (UniPeekConstants.PrefResolution,  _resolutionIdx);
-            EditorPrefs.SetInt (UniPeekConstants.PrefQuality,     _qualityIdx);
-            EditorPrefs.SetInt (UniPeekConstants.PrefFpsCap,      _fpsIdx);
-            EditorPrefs.SetBool(UniPeekConstants.PrefAutoStopPlay,  _autoStopOnPlay);
+            EditorPrefs.SetBool(UniPeekConstants.PrefAutoStopPlay,  _requirePlayMode);
             EditorPrefs.SetBool(UniPeekConstants.PrefAutoStopFocus, _autoStopOnFocusLoss);
         }
     }

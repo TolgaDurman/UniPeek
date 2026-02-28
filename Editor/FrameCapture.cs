@@ -194,7 +194,11 @@ namespace UniPeek
         {
             if (_helperGo == null) return;
             if (_helper != null) _helper.FrameReady -= OnPlayModeFrame;
-            UnityEngine.Object.Destroy(_helperGo);
+            // Destroy() is not valid in edit mode; use DestroyImmediate instead.
+            if (Application.isPlaying)
+                UnityEngine.Object.Destroy(_helperGo);
+            else
+                UnityEngine.Object.DestroyImmediate(_helperGo);
             _helperGo = null;
             _helper   = null;
         }

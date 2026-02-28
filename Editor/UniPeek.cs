@@ -42,20 +42,18 @@ namespace UniPeek
         public const float PingIntervalSeconds = 30f;
 
         // ── EditorPrefs keys ─────────────────────────────────────────────────
-        /// <summary>EditorPrefs key for the saved resolution index.</summary>
-        public const string PrefResolution = "UniPeek_Resolution";
-
-        /// <summary>EditorPrefs key for the saved quality index.</summary>
-        public const string PrefQuality = "UniPeek_Quality";
-
-        /// <summary>EditorPrefs key for the saved FPS-cap index.</summary>
-        public const string PrefFpsCap = "UniPeek_FpsCap";
-
         /// <summary>EditorPrefs key for the auto-stop-on-play-mode toggle.</summary>
         public const string PrefAutoStopPlay = "UniPeek_AutoStopPlay";
 
         /// <summary>EditorPrefs key for the auto-stop-on-focus-loss toggle.</summary>
         public const string PrefAutoStopFocus = "UniPeek_AutoStopFocus";
+
+        /// <summary>
+        /// EditorPrefs key that persists across domain reloads to indicate streaming
+        /// should auto-restart (set when streaming is started with "Only run in Play Mode" OFF).
+        /// Cleared when the user manually stops streaming.
+        /// </summary>
+        public const string PrefPersistStreaming = "UniPeek_PersistStreaming";
 
         // ── Logging helpers ──────────────────────────────────────────────────
         /// <summary>Writes an info-level message tagged with [UniPeek].</summary>
