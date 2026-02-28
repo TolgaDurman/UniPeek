@@ -423,6 +423,28 @@ namespace UniPeek
 
         private void OnHelloReceived(string sessionId, HelloMessage hello)
         {
+            // Overwrite the device name stored at connect-time (which fell back to the
+            // X-Device-Name header) with the richer name the app sends in the hello payload.
+            if (!string.IsNullOrEmpty(hello?.deviceName))
+            {
+                Enqueue(() =>
+                {
+                    int idx = _devices.FindIndex(d => d.SessionId == sessionId);
+                    if (idx >= 0)
+                    {
+                        var old = _devices[idx];
+                        _devices[idx] = new DeviceInfo
+                        {
+                            SessionId   = old.SessionId,
+                            DeviceName  = hello.deviceName,
+                            IPAddress   = old.IPAddress,
+                            ConnectedAt = old.ConnectedAt,
+                        };
+                        DeviceConnected?.Invoke(_devices[idx]);
+                    }
+                });
+            }
+
 #if UNITY_WEBRTC
             if (hello?.client == "flutter_webrtc" && Application.isPlaying)
             {
@@ -430,8 +452,7 @@ namespace UniPeek
                 return;
             }
 #endif
-            // Regular client — JPEG streaming already running, nothing extra needed.
-            UniPeekConstants.Log($"[WS] Hello from {hello?.client ?? "unknown"} (session {sessionId})");
+            UniPeekConstants.Log($"[WS] Hello from {hello?.client ?? "unknown"} ({hello?.deviceName ?? "?"}) session {sessionId}");
         }
 
         private void HandleTouch(TouchMessage msg)

@@ -54,8 +54,9 @@ namespace UniPeek
     public class HelloMessage
     {
         public string type;
-        public string client;  // "flutter" | "flutter_webrtc"
-        public string tier;    // "free" | "pro"
+        public string client;      // "flutter" | "flutter_webrtc"
+        public string tier;        // "free" | "pro"
+        public string deviceName;  // human-readable device name, e.g. "John's iPhone 15 Pro"
     }
 
     /// <summary>WebRTC SDP answer from the phone (signaling).</summary>
