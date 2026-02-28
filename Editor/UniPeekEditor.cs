@@ -155,6 +155,7 @@ namespace UniPeek
             GUILayout.Space(8f);
 
             DrawDeviceList();
+            DrawMatchResolutionButton();
             DrawReverseConnectionPanel();
 
             GUILayout.FlexibleSpace();
@@ -371,6 +372,23 @@ namespace UniPeek
             GUILayout.Space(8f);
         }
 
+        // ── Match device resolution ───────────────────────────────────────────
+
+        private void DrawMatchResolutionButton()
+        {
+            var mgr = ConnectionManager.Instance;
+            if (mgr.LastOrientationWidth <= 0 || mgr.LastOrientationHeight <= 0) return;
+
+            int    w    = mgr.LastOrientationWidth;
+            int    h    = mgr.LastOrientationHeight;
+            string name = mgr.LastOrientationDeviceName ?? "Device";
+
+            if (GUILayout.Button($"Match Game View  ·  {name}  ({w}×{h})", GUILayout.Height(28f)))
+                GameViewResolutionHelper.SetResolution(w, h, name);
+
+            GUILayout.Space(4f);
+        }
+
         // ── Reverse connection ────────────────────────────────────────────────
 
         private void DrawReverseConnectionPanel()
@@ -579,19 +597,38 @@ namespace UniPeek
         private void DestroyQR() => _qrTexture = null;
 
         // ─────────────────────────────────────────────────────────────────────
-        // EditorPrefs
+        // EditorPrefs + crash-safe file storage
         // ─────────────────────────────────────────────────────────────────────
+
+        // EditorPrefs (NSUserDefaults on macOS) has a delayed disk flush — a hard
+        // crash can lose the last write. The editor name is also written to a file
+        // so it survives crashes (file I/O is synchronous / immediately flushed).
+        private static readonly string EditorNameFilePath =
+            System.IO.Path.Combine("UserSettings", "UniPeekEditorName.txt");
 
         private void LoadPrefs()
         {
             _requirePlayMode = EditorPrefs.GetBool(UniPeekConstants.PrefAutoStopPlay, true);
-            _editorName      = EditorPrefs.GetString(UniPeekConstants.PrefEditorName, string.Empty);
+
+            // File takes priority — it's written synchronously so it's crash-safe.
+            if (System.IO.File.Exists(EditorNameFilePath))
+                _editorName = System.IO.File.ReadAllText(EditorNameFilePath);
+            else
+                _editorName = EditorPrefs.GetString(UniPeekConstants.PrefEditorName, string.Empty);
         }
 
         private void SavePrefs()
         {
             EditorPrefs.SetBool(UniPeekConstants.PrefAutoStopPlay, _requirePlayMode);
             EditorPrefs.SetString(UniPeekConstants.PrefEditorName, _editorName);
+
+            // Also write to file for crash resilience.
+            try
+            {
+                System.IO.Directory.CreateDirectory("UserSettings");
+                System.IO.File.WriteAllText(EditorNameFilePath, _editorName);
+            }
+            catch { /* non-critical */ }
         }
     }
 }

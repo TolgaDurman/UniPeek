@@ -7,256 +7,100 @@ using UnityEditorInternal;
 namespace UniPeek
 {
     /// <summary>
-    /// Static utility for managing Game View resolutions in the Unity Editor.
-    /// Provides methods to add, remove, and select custom resolution sizes.
+    /// Sets the Game View to a connected device's resolution.
+    /// Call <see cref="SetResolution"/> from a button — safe to call from OnGUI.
     /// </summary>
     public static class GameViewResolutionHelper
     {
+        private const string LabelPrefix = "UniPeek - ";
+
         /// <summary>
-        /// Sets the Game View to a specific resolution. If the resolution doesn't exist,
-        /// it will be created as a custom size.
+        /// Replaces any existing "UniPeek - " Game View entry with one labelled
+        /// "UniPeek - {deviceName}" at the given dimensions and selects it.
+        /// Deferred one editor tick so it is safe to invoke from an OnGUI button handler.
         /// </summary>
-        public static void SetResolution(int width, int height)
+        public static void SetResolution(int width, int height, string deviceName)
+        {
+            EditorApplication.delayCall += () => Apply(width, height, deviceName);
+        }
+
+        private static void Apply(int width, int height, string deviceName)
         {
             try
             {
-                Type gameViewSizeType = typeof(Editor).Assembly.GetType("UnityEditor.GameViewSize");
-                Type gameViewSizesType = typeof(Editor).Assembly.GetType("UnityEditor.GameViewSizes");
+                Type gameViewSizeType     = typeof(Editor).Assembly.GetType("UnityEditor.GameViewSize");
+                Type gameViewSizesType    = typeof(Editor).Assembly.GetType("UnityEditor.GameViewSizes");
                 Type gameViewSizeTypeEnum = typeof(Editor).Assembly.GetType("UnityEditor.GameViewSizeType");
-                Type gameViewType = typeof(Editor).Assembly.GetType("UnityEditor.GameView");
+                Type gameViewType         = typeof(Editor).Assembly.GetType("UnityEditor.GameView");
 
-                if (gameViewSizeType == null || gameViewSizesType == null || gameViewSizeTypeEnum == null || gameViewType == null)
+                if (gameViewSizeType == null || gameViewSizesType == null
+                    || gameViewSizeTypeEnum == null || gameViewType == null)
                 {
-                    Debug.LogError("Failed to load required GameView types from Unity editor assembly.");
+                    Debug.LogError("[UniPeek] Failed to load required GameView types.");
                     return;
                 }
 
-                // Get the GameViewSizes singleton instance
-                Type scriptableSingletonType = typeof(ScriptableSingleton<>).MakeGenericType(gameViewSizesType);
-                object singletonInstance = scriptableSingletonType.GetProperty("instance").GetValue(null, null);
+                Type   singletonType = typeof(ScriptableSingleton<>).MakeGenericType(gameViewSizesType);
+                object instance      = singletonType.GetProperty("instance").GetValue(null, null);
+                object group         = gameViewSizesType.GetMethod("GetGroup")
+                    .Invoke(instance, new object[] { (int)GameViewSizeGroupType.Standalone });
 
-                // Get the Standalone group
-                MethodInfo getGroupMethod = gameViewSizesType.GetMethod("GetGroup");
-                object group = getGroupMethod.Invoke(singletonInstance, new object[] { (int)GameViewSizeGroupType.Standalone });
+                var getTexts     = group.GetType().GetMethod("GetDisplayTexts");
+                var addCustom    = group.GetType().GetMethod("AddCustomSize");
+                var removeCustom = group.GetType().GetMethod("RemoveCustomSize");
+                int builtinCount = (int)group.GetType().GetMethod("GetBuiltinCount").Invoke(group, null);
 
-                // Look for an existing size entry
-                string desiredLabel = $"{width}x{height}";
-                MethodInfo getDisplayTextsMethod = group.GetType().GetMethod("GetDisplayTexts");
-                string[] texts = getDisplayTextsMethod.Invoke(group, null) as string[];
-                int idx = Array.IndexOf(texts, desiredLabel);
-
-                if (idx == -1)
+                // Remove every existing "UniPeek - " entry so the list never accumulates.
+                bool found;
+                do
                 {
-                    // Create and add a new custom size
-                    Type[] ctorTypes = new Type[] { gameViewSizeTypeEnum, typeof(int), typeof(int), typeof(string) };
-                    ConstructorInfo ctor = gameViewSizeType.GetConstructor(ctorTypes);
-                    object sizeTypeValue = Enum.Parse(gameViewSizeTypeEnum, "FixedResolution");
-                    object newSize = ctor.Invoke(new object[] { sizeTypeValue, width, height, desiredLabel });
+                    found = false;
+                    string[] t = getTexts.Invoke(group, null) as string[];
+                    for (int i = t.Length - 1; i >= builtinCount; i--)
+                    {
+                        if (t[i].StartsWith(LabelPrefix))
+                        {
+                            removeCustom.Invoke(group, new object[] { i - builtinCount });
+                            found = true;
+                            break;
+                        }
+                    }
+                } while (found);
 
-                    MethodInfo addCustomSizeMethod = group.GetType().GetMethod("AddCustomSize");
-                    addCustomSizeMethod.Invoke(group, new object[] { newSize });
+                // Record the current count — the new entry will land at exactly this position.
+                int idx = (getTexts.Invoke(group, null) as string[]).Length;
 
-                    // Find the index again after adding
-                    texts = getDisplayTextsMethod.Invoke(group, null) as string[];
-                    idx = Array.IndexOf(texts, desiredLabel);
-                }
+                // Add the fresh entry.
+                string label     = $"{LabelPrefix}{deviceName}";
+                var    ctor      = gameViewSizeType.GetConstructor(
+                    new Type[] { gameViewSizeTypeEnum, typeof(int), typeof(int), typeof(string) });
+                var    fixedType = Enum.Parse(gameViewSizeTypeEnum, "FixedResolution");
+                addCustom.Invoke(group, new object[] { ctor.Invoke(new object[] { fixedType, width, height, label }) });
 
-                if (idx != -1)
+                // Verify it was actually added.
+                int countAfter = (getTexts.Invoke(group, null) as string[]).Length;
+                if (countAfter != idx + 1) { Debug.LogError("[UniPeek] Failed to add resolution entry."); return; }
+
+                var wins = Resources.FindObjectsOfTypeAll(gameViewType);
+                if (wins == null || wins.Length == 0)
                 {
-                    // Set the selected size index in the GameView window
-                    EditorWindow gameViewWindow = EditorWindow.GetWindow(gameViewType);
-                    PropertyInfo selectedSizeIndexProp = gameViewType.GetProperty(
-                        "selectedSizeIndex",
-                        BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-                    selectedSizeIndexProp.SetValue(gameViewWindow, idx, null);
-                    Debug.Log($"Set Game View resolution to {width}x{height}");
-                }
-            }
-            catch (Exception ex)
-            {
-                Debug.LogError($"Failed to set Game View resolution: {ex.Message}\n{ex.StackTrace}");
-            }
-        }
-
-        /// <summary>
-        /// Adds a custom resolution to the Game View size list and optionally selects it.
-        /// </summary>
-        public static void AddCustomResolution(int width, int height, string label = null, bool selectAfterAdding = true)
-        {
-            try
-            {
-                label = label ?? $"{width}x{height}";
-
-                Type gameViewSizeType = typeof(Editor).Assembly.GetType("UnityEditor.GameViewSize");
-                Type gameViewSizesType = typeof(Editor).Assembly.GetType("UnityEditor.GameViewSizes");
-                Type gameViewSizeTypeEnum = typeof(Editor).Assembly.GetType("UnityEditor.GameViewSizeType");
-
-                if (gameViewSizeType == null || gameViewSizesType == null || gameViewSizeTypeEnum == null)
-                {
-                    Debug.LogError("Failed to load required GameView types from Unity editor assembly.");
+                    Debug.LogWarning("[UniPeek] Game View window is not open.");
                     return;
                 }
 
-                // Get the GameViewSizes singleton instance
-                Type scriptableSingletonType = typeof(ScriptableSingleton<>).MakeGenericType(gameViewSizesType);
-                object singletonInstance = scriptableSingletonType.GetProperty("instance").GetValue(null, null);
+                EditorWindow win = wins[0] as EditorWindow;
+                if (win == null) return;
 
-                // Get the Standalone group
-                MethodInfo getGroupMethod = gameViewSizesType.GetMethod("GetGroup");
-                object group = getGroupMethod.Invoke(singletonInstance, new object[] { (int)GameViewSizeGroupType.Standalone });
-
-                // Create and add new custom size
-                Type[] ctorTypes = new Type[] { gameViewSizeTypeEnum, typeof(int), typeof(int), typeof(string) };
-                ConstructorInfo ctor = gameViewSizeType.GetConstructor(ctorTypes);
-                object sizeTypeValue = Enum.Parse(gameViewSizeTypeEnum, "FixedResolution");
-                object newSize = ctor.Invoke(new object[] { sizeTypeValue, width, height, label });
-
-                MethodInfo addCustomSizeMethod = group.GetType().GetMethod("AddCustomSize");
-                addCustomSizeMethod.Invoke(group, new object[] { newSize });
-
-                Debug.Log($"Added custom Game View resolution: {label} ({width}x{height})");
-
-                // Optionally select the newly added resolution
-                if (selectAfterAdding)
-                {
-                    SetResolution(width, height);
-                }
-            }
-            catch (Exception ex)
-            {
-                Debug.LogError($"Failed to add custom Game View resolution: {ex.Message}\n{ex.StackTrace}");
-            }
-        }
-
-        /// <summary>
-        /// Removes a custom resolution at the specified index.
-        /// </summary>
-        public static void RemoveCustomResolution(int index)
-        {
-            try
-            {
-                Type gameViewSizesType = typeof(Editor).Assembly.GetType("UnityEditor.GameViewSizes");
-
-                if (gameViewSizesType == null)
-                {
-                    Debug.LogError("Failed to load GameViewSizes type from Unity editor assembly.");
-                    return;
-                }
-
-                // Get the GameViewSizes singleton instance
-                Type scriptableSingletonType = typeof(ScriptableSingleton<>).MakeGenericType(gameViewSizesType);
-                object singletonInstance = scriptableSingletonType.GetProperty("instance").GetValue(null, null);
-
-                // Get the Standalone group
-                MethodInfo getGroupMethod = gameViewSizesType.GetMethod("GetGroup");
-                object group = getGroupMethod.Invoke(singletonInstance, new object[] { (int)GameViewSizeGroupType.Standalone });
-
-                // Remove custom size
-                MethodInfo removeCustomSizeMethod = group.GetType().GetMethod("RemoveCustomSize");
-                removeCustomSizeMethod.Invoke(group, new object[] { index });
-
-                Debug.Log($"Removed custom Game View resolution at index {index}");
-            }
-            catch (Exception ex)
-            {
-                Debug.LogError($"Failed to remove custom Game View resolution: {ex.Message}\n{ex.StackTrace}");
-            }
-        }
-
-        /// <summary>
-        /// Gets the total count of available resolutions (built-in + custom).
-        /// </summary>
-        public static int GetResolutionCount()
-        {
-            try
-            {
-                Type gameViewSizesType = typeof(Editor).Assembly.GetType("UnityEditor.GameViewSizes");
-
-                if (gameViewSizesType == null)
-                    return 0;
-
-                // Get the GameViewSizes singleton instance
-                Type scriptableSingletonType = typeof(ScriptableSingleton<>).MakeGenericType(gameViewSizesType);
-                object singletonInstance = scriptableSingletonType.GetProperty("instance").GetValue(null, null);
-
-                // Get the Standalone group
-                MethodInfo getGroupMethod = gameViewSizesType.GetMethod("GetGroup");
-                object group = getGroupMethod.Invoke(singletonInstance, new object[] { (int)GameViewSizeGroupType.Standalone });
-
-                // Get counts
-                MethodInfo getBuiltinCountMethod = group.GetType().GetMethod("GetBuiltinCount");
-                MethodInfo getCustomCountMethod = group.GetType().GetMethod("GetCustomCount");
-                int builtinCount = (int)getBuiltinCountMethod.Invoke(group, null);
-                int customCount = (int)getCustomCountMethod.Invoke(group, null);
-
-                return builtinCount + customCount;
-            }
-            catch (Exception ex)
-            {
-                Debug.LogError($"Failed to get resolution count: {ex.Message}");
-                return 0;
-            }
-        }
-
-        /// <summary>
-        /// Gets the index of the currently selected resolution in the Game View.
-        /// </summary>
-        public static int GetCurrentResolutionIndex()
-        {
-            try
-            {
-                Type gameViewType = typeof(Editor).Assembly.GetType("UnityEditor.GameView");
-
-                if (gameViewType == null)
-                    return -1;
-
-                EditorWindow gameViewWindow = EditorWindow.GetWindow(gameViewType);
-                PropertyInfo selectedSizeIndexProp = gameViewType.GetProperty(
+                var prop = gameViewType.GetProperty(
                     "selectedSizeIndex",
                     BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                prop?.SetValue(win, idx, null);
 
-                return (int)selectedSizeIndexProp.GetValue(gameViewWindow);
+                Debug.Log("[UniPeek] Game View -> " + width + "x" + height + "  (" + label + ")");
             }
             catch (Exception ex)
             {
-                Debug.LogError($"Failed to get current resolution index: {ex.Message}");
-                return -1;
-            }
-        }
-
-        /// <summary>
-        /// Gets the label/name of the resolution at the specified index.
-        /// </summary>
-        public static string GetResolutionLabel(int index)
-        {
-            try
-            {
-                Type gameViewSizesType = typeof(Editor).Assembly.GetType("UnityEditor.GameViewSizes");
-
-                if (gameViewSizesType == null)
-                    return null;
-
-                // Get the GameViewSizes singleton instance
-                Type scriptableSingletonType = typeof(ScriptableSingleton<>).MakeGenericType(gameViewSizesType);
-                object singletonInstance = scriptableSingletonType.GetProperty("instance").GetValue(null, null);
-
-                // Get the Standalone group
-                MethodInfo getGroupMethod = gameViewSizesType.GetMethod("GetGroup");
-                object group = getGroupMethod.Invoke(singletonInstance, new object[] { (int)GameViewSizeGroupType.Standalone });
-
-                // Get display texts
-                MethodInfo getDisplayTextsMethod = group.GetType().GetMethod("GetDisplayTexts");
-                string[] texts = getDisplayTextsMethod.Invoke(group, null) as string[];
-
-                if (index >= 0 && index < texts.Length)
-                    return texts[index];
-
-                return null;
-            }
-            catch (Exception ex)
-            {
-                Debug.LogError($"Failed to get resolution label: {ex.Message}");
-                return null;
+                Debug.LogError("[UniPeek] SetResolution failed: " + ex.Message + "\n" + ex.StackTrace);
             }
         }
     }

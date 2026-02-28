@@ -85,6 +85,16 @@ namespace UniPeek
         public long   ts;   // Unix epoch milliseconds
     }
 
+    /// <summary>Orientation/resolution change from the phone.</summary>
+    [Serializable]
+    public class OrientationMessage
+    {
+        public string type;
+        public bool   landscape;
+        public int    width;
+        public int    height;
+    }
+
     // ── WebSocket behaviour (one instance per connected client) ───────────────
 
     /// <summary>
@@ -180,6 +190,9 @@ namespace UniPeek
 
         /// <summary>Raised when a pong reply arrives. Args: timestamp that was echoed back.</summary>
         public event Action<long> PongReceived;
+
+        /// <summary>Raised when an orientation change is received. Args: (sessionId, msg).</summary>
+        public event Action<string, OrientationMessage> OrientationReceived;
 
         // ── Internal state ────────────────────────────────────────────────────
         private WebSocketSharp.Server.WebSocketServer _server;
@@ -336,6 +349,11 @@ namespace UniPeek
                     case "pong":
                         var pongMsg = UnityEngine.JsonUtility.FromJson<PingPongMessage>(json);
                         PongReceived?.Invoke(pongMsg.ts);
+                        break;
+
+                    case "orientation":
+                        OrientationReceived?.Invoke(sessionId,
+                            UnityEngine.JsonUtility.FromJson<OrientationMessage>(json));
                         break;
 
                     default:

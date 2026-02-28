@@ -97,6 +97,15 @@ namespace UniPeek
         /// <summary>Whether a WebRTC connection is currently active.</summary>
         public bool WebRtcActive { get; private set; }
 
+        /// <summary>Width reported in the last orientation message from the host device (0 if none received).</summary>
+        public int LastOrientationWidth { get; private set; }
+
+        /// <summary>Height reported in the last orientation message from the host device (0 if none received).</summary>
+        public int LastOrientationHeight { get; private set; }
+
+        /// <summary>Device name associated with the last orientation message.</summary>
+        public string LastOrientationDeviceName { get; private set; }
+
         // ── Internal components ───────────────────────────────────────────────
         private UniPeekWebSocketServer _wsServer;
         private MdnsAdvertiser         _mdns;
@@ -181,8 +190,9 @@ namespace UniPeek
                     InputInjector.InjectAccelerometer(msg.x, msg.y, msg.z);
                 });
             };
-            _wsServer.HelloReceived += OnHelloReceived;
-            _wsServer.PongReceived  += OnPongReceived;
+            _wsServer.HelloReceived       += OnHelloReceived;
+            _wsServer.PongReceived        += OnPongReceived;
+            _wsServer.OrientationReceived += OnOrientationReceived;
 
 #if UNITY_WEBRTC
             _wsServer.AnswerReceived    += OnAnswerReceived;
@@ -236,6 +246,9 @@ namespace UniPeek
             WebRtcActive = false;
             _rttSamples.Clear();
 
+            LastOrientationWidth      = 0;
+            LastOrientationHeight     = 0;
+            LastOrientationDeviceName = null;
             UnhookEditorUpdate();
             QRCodeGenerator.Invalidate();
             SetState(ConnectionState.Disconnected);
@@ -488,6 +501,19 @@ namespace UniPeek
             }
 #endif
             UniPeekConstants.Log($"[WS] Hello from {hello?.client ?? "unknown"} ({hello?.deviceName ?? "?"}) session {sessionId}");
+        }
+
+        private void OnOrientationReceived(string sessionId, OrientationMessage msg)
+        {
+            if (msg == null) return;
+            Enqueue(() =>
+            {
+                if (_hostSessionId != null && sessionId != _hostSessionId) return;
+                LastOrientationWidth      = msg.width;
+                LastOrientationHeight     = msg.height;
+                LastOrientationDeviceName = _devices.Find(d => d.SessionId == sessionId)?.DeviceName ?? sessionId;
+                UniPeekConstants.Log($"[WS] Orientation {msg.width}x{msg.height} landscape={msg.landscape} device='{LastOrientationDeviceName}'");
+            });
         }
 
         private void HandleTouch(TouchMessage msg)
