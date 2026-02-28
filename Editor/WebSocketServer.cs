@@ -150,17 +150,17 @@ namespace UniPeek
         /// <summary>Raised when a client disconnects. Args: (sessionId).</summary>
         public event Action<string>         ClientDisconnected;
 
-        /// <summary>Raised when a configuration update is received from a client.</summary>
-        public event Action<ConfigMessage>  ConfigReceived;
+        /// <summary>Raised when a configuration update is received. Args: (sessionId, msg).</summary>
+        public event Action<string, ConfigMessage>  ConfigReceived;
 
-        /// <summary>Raised when a touch event is received from a client.</summary>
-        public event Action<TouchMessage>   TouchReceived;
+        /// <summary>Raised when a touch event is received. Args: (sessionId, msg).</summary>
+        public event Action<string, TouchMessage>   TouchReceived;
 
-        /// <summary>Raised when gyroscope data is received from a client.</summary>
-        public event Action<GyroMessage>    GyroReceived;
+        /// <summary>Raised when gyroscope data is received. Args: (sessionId, msg).</summary>
+        public event Action<string, GyroMessage>    GyroReceived;
 
-        /// <summary>Raised when accelerometer data is received from a client.</summary>
-        public event Action<AccelMessage>   AccelReceived;
+        /// <summary>Raised when accelerometer data is received. Args: (sessionId, msg).</summary>
+        public event Action<string, AccelMessage>   AccelReceived;
 
         // ── WebRTC signaling events ───────────────────────────────────────────
 
@@ -294,22 +294,22 @@ namespace UniPeek
                         break;
 
                     case "config":
-                        ConfigReceived?.Invoke(
+                        ConfigReceived?.Invoke(sessionId,
                             UnityEngine.JsonUtility.FromJson<ConfigMessage>(json));
                         break;
 
                     case "touch":
-                        TouchReceived?.Invoke(
+                        TouchReceived?.Invoke(sessionId,
                             UnityEngine.JsonUtility.FromJson<TouchMessage>(json));
                         break;
 
                     case "gyro":
-                        GyroReceived?.Invoke(
+                        GyroReceived?.Invoke(sessionId,
                             UnityEngine.JsonUtility.FromJson<GyroMessage>(json));
                         break;
 
                     case "accel":
-                        AccelReceived?.Invoke(
+                        AccelReceived?.Invoke(sessionId,
                             UnityEngine.JsonUtility.FromJson<AccelMessage>(json));
                         break;
 

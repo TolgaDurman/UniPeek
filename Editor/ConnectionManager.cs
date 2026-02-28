@@ -107,6 +107,9 @@ namespace UniPeek
         private readonly List<DeviceInfo>       _devices         = new();
         private readonly ConcurrentQueue<Action> _mainThreadQueue = new();
 
+        // First session to send a valid hello becomes host; only it can send config/input.
+        private string _hostSessionId;
+
         private bool  _editorHooked;
         private float _statsTimer;
 
@@ -159,17 +162,25 @@ namespace UniPeek
             _wsServer.ClientConnected    += OnClientConnected;
             _wsServer.ClientDisconnected += OnClientDisconnected;
             _wsServer.ConfigReceived     += OnConfigReceived;
-            _wsServer.TouchReceived      += msg => Enqueue(() => HandleTouch(msg));
-            _wsServer.GyroReceived       += msg => Enqueue(() =>
+            _wsServer.TouchReceived      += (sid, msg) => { if (sid == _hostSessionId) Enqueue(() => HandleTouch(msg)); };
+            _wsServer.GyroReceived       += (sid, msg) =>
             {
-                UniPeekConstants.Log($"[Input] Gyro  x={msg.x:F3} y={msg.y:F3} z={msg.z:F3}");
-                InputInjector.InjectGyro(msg.x, msg.y, msg.z);
-            });
-            _wsServer.AccelReceived += msg => Enqueue(() =>
+                if (sid != _hostSessionId) return;
+                Enqueue(() =>
+                {
+                    UniPeekConstants.Log($"[Input] Gyro  x={msg.x:F3} y={msg.y:F3} z={msg.z:F3}");
+                    InputInjector.InjectGyro(msg.x, msg.y, msg.z);
+                });
+            };
+            _wsServer.AccelReceived += (sid, msg) =>
             {
-                UniPeekConstants.Log($"[Input] Accel x={msg.x:F3} y={msg.y:F3} z={msg.z:F3}");
-                InputInjector.InjectAccelerometer(msg.x, msg.y, msg.z);
-            });
+                if (sid != _hostSessionId) return;
+                Enqueue(() =>
+                {
+                    UniPeekConstants.Log($"[Input] Accel x={msg.x:F3} y={msg.y:F3} z={msg.z:F3}");
+                    InputInjector.InjectAccelerometer(msg.x, msg.y, msg.z);
+                });
+            };
             _wsServer.HelloReceived += OnHelloReceived;
             _wsServer.PongReceived  += OnPongReceived;
 
@@ -180,8 +191,9 @@ namespace UniPeek
             _wsServer.Start();
 
             // Boot mDNS
-            string localIp = QRCodeGenerator.GetLocalIPv4();
-            _mdns = new MdnsAdvertiser(UniPeekConstants.DefaultPort, localIp);
+            string localIp    = QRCodeGenerator.GetLocalIPv4();
+            string editorName = EditorPrefs.GetString(UniPeekConstants.PrefEditorName, string.Empty);
+            _mdns = new MdnsAdvertiser(UniPeekConstants.DefaultPort, localIp, editorName);
             _mdns.Start();
 
             // Boot encoder + capture
@@ -219,6 +231,7 @@ namespace UniPeek
             _reverseClient = null;
 
             _devices.Clear();
+            _hostSessionId = null;
             SmoothedRtt  = 0f;
             WebRtcActive = false;
             _rttSamples.Clear();
@@ -388,6 +401,13 @@ namespace UniPeek
                 _devices.RemoveAt(idx);
                 UniPeekConstants.Log($"[WS] Device disconnected: {info.DeviceName}");
 
+                if (_hostSessionId == sessionId)
+                {
+                    _hostSessionId = _devices.Count > 0 ? _devices[0].SessionId : null;
+                    if (_hostSessionId != null)
+                        UniPeekConstants.Log($"[Auth] Host transferred to {_devices[0].DeviceName}");
+                }
+
 #if UNITY_WEBRTC
                 if (_webRtcSessionId == sessionId)
                     TearDownWebRTC();
@@ -397,9 +417,14 @@ namespace UniPeek
                 DeviceDisconnected?.Invoke(info);
             });
 
-        private void OnConfigReceived(ConfigMessage msg)
+        private void OnConfigReceived(string sessionId, ConfigMessage msg)
         {
             if (msg == null) return;
+            if (sessionId != _hostSessionId)
+            {
+                UniPeekConstants.LogWarning($"[Auth] Config rejected from non-host session {sessionId}");
+                return;
+            }
 
             int width  = Config.Width;
             int height = Config.Height;
@@ -423,6 +448,16 @@ namespace UniPeek
 
         private void OnHelloReceived(string sessionId, HelloMessage hello)
         {
+            // First device to send hello becomes the host (controls config and input).
+            Enqueue(() =>
+            {
+                if (_hostSessionId == null)
+                {
+                    _hostSessionId = sessionId;
+                    UniPeekConstants.Log($"[Auth] Host session set: {hello?.deviceName ?? sessionId}");
+                }
+            });
+
             // Overwrite the device name stored at connect-time (which fell back to the
             // X-Device-Name header) with the richer name the app sends in the hello payload.
             if (!string.IsNullOrEmpty(hello?.deviceName))

@@ -37,11 +37,13 @@ namespace UniPeek
         private const uint SRV_TTL = 120;
         private const uint A_TTL = 120;
 
-        public MdnsAdvertiser(int port, string localIp)
+        public MdnsAdvertiser(int port, string localIp, string displayName = null)
         {
             _port = port;
             _localIp = localIp;
-            _machineName = Environment.MachineName
+            _machineName = (string.IsNullOrWhiteSpace(displayName)
+                    ? Environment.MachineName
+                    : displayName)
                 .ToLowerInvariant()
                 .Replace(" ", "-");
         }

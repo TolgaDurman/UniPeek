@@ -34,6 +34,9 @@ namespace UniPeek
         // ── Assets ────────────────────────────────────────────────────────────
         private Texture2D _logoTexture;
 
+        // ── Editor name ───────────────────────────────────────────────────────
+        private string _editorName = string.Empty;
+
         // ── Reverse-connection UI ─────────────────────────────────────────────
         private string  _reverseIp        = string.Empty;
         private bool    _showReversePanel;
@@ -186,7 +189,9 @@ namespace UniPeek
             {
                 case ConnectionState.Advertising:
                     dotColor      = ColAmber;
-                    primaryText   = "Waiting for device…";
+                    primaryText   = string.IsNullOrWhiteSpace(_editorName)
+                        ? System.Environment.MachineName
+                        : _editorName;
                     secondaryText = $"{QRCodeGenerator.GetLocalIPv4()}:{UniPeekConstants.DefaultPort}";
                     break;
                 case ConnectionState.Connected:
@@ -313,6 +318,16 @@ namespace UniPeek
 
         private void DrawSettings()
         {
+            using (new EditorGUILayout.HorizontalScope())
+            {
+                _editorName = EditorGUILayout.TextField("Editor Name", _editorName);
+                if (GUILayout.Button("Set", EditorStyles.miniButton, GUILayout.Width(32f)))
+                {
+                    SavePrefs();
+                    QRCodeGenerator.Invalidate();
+                }
+            }
+
             EditorGUI.BeginChangeCheck();
             using (new EditorGUILayout.HorizontalScope())
             {
@@ -568,9 +583,15 @@ namespace UniPeek
         // ─────────────────────────────────────────────────────────────────────
 
         private void LoadPrefs()
-            => _requirePlayMode = EditorPrefs.GetBool(UniPeekConstants.PrefAutoStopPlay, true);
+        {
+            _requirePlayMode = EditorPrefs.GetBool(UniPeekConstants.PrefAutoStopPlay, true);
+            _editorName      = EditorPrefs.GetString(UniPeekConstants.PrefEditorName, string.Empty);
+        }
 
         private void SavePrefs()
-            => EditorPrefs.SetBool(UniPeekConstants.PrefAutoStopPlay, _requirePlayMode);
+        {
+            EditorPrefs.SetBool(UniPeekConstants.PrefAutoStopPlay, _requirePlayMode);
+            EditorPrefs.SetString(UniPeekConstants.PrefEditorName, _editorName);
+        }
     }
 }

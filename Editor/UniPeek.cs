@@ -48,6 +48,9 @@ namespace UniPeek
         /// <summary>EditorPrefs key for the auto-stop-on-focus-loss toggle.</summary>
         public const string PrefAutoStopFocus = "UniPeek_AutoStopFocus";
 
+        /// <summary>EditorPrefs key for the user-defined editor display name (shown in Flutter discovery).</summary>
+        public const string PrefEditorName = "UniPeek_EditorName";
+
         /// <summary>
         /// EditorPrefs key that persists across domain reloads to indicate streaming
         /// should auto-restart (set when streaming is started with "Only run in Play Mode" OFF).

@@ -1,6 +1,7 @@
 using System;
 using System.Net;
 using System.Net.Sockets;
+using UnityEditor;
 using UnityEngine;
 using QRCoder;
 
@@ -103,10 +104,16 @@ namespace UniPeek
             {
                 using var generator = new global::QRCoder.QRCodeGenerator();
                 using var data = generator.CreateQrCode(payload, global::QRCoder.QRCodeGenerator.ECCLevel.Q);
-                using var code = new QRCode(data);
+                using var code = new PngByteQRCode(data);
 
-                System.Drawing.Bitmap bmp = code.GetGraphic(pixelsPerModule);
-                return BitmapToTexture2D(bmp);
+                byte[] pngBytes = code.GetGraphic(pixelsPerModule);
+                var tex = new Texture2D(2, 2, TextureFormat.RGBA32, false)
+                {
+                    filterMode = FilterMode.Point,
+                    wrapMode = TextureWrapMode.Clamp,
+                };
+                tex.LoadImage(pngBytes);
+                return tex;
             }
             catch (Exception ex)
             {
@@ -128,33 +135,9 @@ namespace UniPeek
         /// </summary>
         private static string BuildPayload(string ip, int port)
         {
-            string name = Uri.EscapeDataString(Environment.MachineName);
+            string raw  = UnityEditor.EditorPrefs.GetString(UniPeekConstants.PrefEditorName, string.Empty);
+            string name = Uri.EscapeDataString(string.IsNullOrWhiteSpace(raw) ? Environment.MachineName : raw);
             return $"https://unipeek.app/connect?ip={ip}&port={port}&name={name}";
-        }
-
-        /// <summary>Converts a <see cref="System.Drawing.Bitmap"/> to a Unity <see cref="Texture2D"/>.</summary>
-        private static Texture2D BitmapToTexture2D(System.Drawing.Bitmap bmp)
-        {
-            int w = bmp.Width;
-            int h = bmp.Height;
-
-            var tex = new Texture2D(w, h, TextureFormat.RGBA32, false)
-            {
-                filterMode = FilterMode.Point,  // keep QR dots crisp
-                wrapMode = TextureWrapMode.Clamp,
-            };
-
-            for (int y = 0; y < h; y++)
-            {
-                for (int x = 0; x < w; x++)
-                {
-                    System.Drawing.Color p = bmp.GetPixel(x, y);
-                    tex.SetPixel(x, h - 1 - y, new Color32(p.R, p.G, p.B, p.A));
-                }
-            }
-
-            tex.Apply();
-            return tex;
         }
 
         private static void DestroyCachedTexture()
