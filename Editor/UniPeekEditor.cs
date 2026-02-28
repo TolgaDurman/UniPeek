@@ -1,5 +1,3 @@
-using System;
-using System.Collections.Generic;
 using UnityEditor;
 using UnityEngine;
 
@@ -7,68 +5,63 @@ namespace UniPeek
 {
     /// <summary>
     /// Main UniPeek Editor window (<c>Window ▶ UniPeek</c>).
-    /// <para>
-    /// Provides controls for starting/stopping streaming, selecting resolution,
-    /// quality and FPS cap, displays a QR code for pairing the companion app, and
-    /// shows live connection status and per-device info.
-    /// </para>
     /// </summary>
     public sealed class UniPeekWindow : EditorWindow
     {
         // ── Persistent settings ───────────────────────────────────────────────
         private bool _requirePlayMode;
-        private bool _autoStopOnFocusLoss;
 
-        // EditorPrefs key for the "start streaming once play mode is fully entered" flag.
-        // Using EditorPrefs instead of a field because a domain reload wipes all fields.
+        // Survives domain reloads; claimed with DeleteKey to prevent double-start.
         private const string PrefPendingStart = "UniPeek_PendingStart";
 
         // ── Runtime state ─────────────────────────────────────────────────────
-        private bool   _streaming;
-        private float  _captureFps;
-        private float  _encodeMs;
-        private float  _rttMs;
-        private bool   _webRtcActive;
+        private bool  _streaming;
+        private float _captureFps;
+        private float _encodeMs;
+        private float _rttMs;
+        private bool  _webRtcActive;
 
         // ── QR code ───────────────────────────────────────────────────────────
         private Texture2D _qrTexture;
 
-        // ── GUIStyles (initialized lazily) ────────────────────────────────────
-        private GUIStyle _statusStyle;
-        private GUIStyle _headerStyle;
+        // ── Styles (initialized lazily) ───────────────────────────────────────
+        private GUIStyle _titleStyle;
         private GUIStyle _versionStyle;
+        private GUIStyle _statusTextStyle;
+        private GUIStyle _sectionLabelStyle;
         private bool     _stylesInitialized;
 
-        // ── Logo ──────────────────────────────────────────────────────────────
+        // ── Assets ────────────────────────────────────────────────────────────
         private Texture2D _logoTexture;
 
-        // ── Reverse-connection UI state ───────────────────────────────────────
-        private string  _reverseIp = string.Empty;
+        // ── Reverse-connection UI ─────────────────────────────────────────────
+        private string  _reverseIp        = string.Empty;
         private bool    _showReversePanel;
         private Vector2 _scrollPos;
+
+        // ── Colors ────────────────────────────────────────────────────────────
+        private static readonly Color ColGreen = new(0.18f, 0.80f, 0.32f);
+        private static readonly Color ColAmber = new(1.00f, 0.72f, 0.00f);
+        private static readonly Color ColBlue  = new(0.28f, 0.58f, 1.00f);
+        private static readonly Color ColGrey  = new(0.45f, 0.45f, 0.45f);
 
         // ─────────────────────────────────────────────────────────────────────
         // Menu item
         // ─────────────────────────────────────────────────────────────────────
 
-        /// <summary>Opens the UniPeek window docked next to the Inspector.</summary>
         [MenuItem("Window/UniPeek/Open")]
         public static void ShowWindow()
         {
             var logoTex = AssetDatabase.LoadAssetAtPath<Texture2D>(
                 "Assets/Plugins/UniPeek/Textures/unipeek-logo.png");
 
-            var window = GetWindow<UniPeekWindow>(
-                utility: false, title: "UniPeek",
-                focus: true);
-
-            window.titleContent = new GUIContent(
-                "UniPeek", logoTex, "UniPeek — Game View streaming");
-            window.minSize = new Vector2(300f, 520f);
+            var window = GetWindow<UniPeekWindow>(utility: false, title: "UniPeek", focus: true);
+            window.titleContent = new GUIContent("UniPeek", logoTex, "UniPeek — Game View streaming");
+            window.minSize = new Vector2(280f, 440f);
         }
 
         // ─────────────────────────────────────────────────────────────────────
-        // EditorWindow lifecycle
+        // Lifecycle
         // ─────────────────────────────────────────────────────────────────────
 
         private void OnEnable()
@@ -82,16 +75,13 @@ namespace UniPeek
             EditorApplication.playModeStateChanged += OnPlayModeChanged;
 
             // After a domain reload the EditorWindow is recreated while Unity is already
-            // in play mode.  EnteredPlayMode may have fired before OnEnable ran, so we
-            // check the pending flag here as well as in OnPlayModeChanged — whichever
-            // runs first claims the flag via DeleteKey, the other is a no-op.
+            // in play mode. EnteredPlayMode may have fired before OnEnable ran, so we
+            // check the pending flag here as well — whichever runs first claims it.
             if (Application.isPlaying && EditorPrefs.GetBool(PrefPendingStart, false))
             {
                 EditorPrefs.DeleteKey(PrefPendingStart);
                 DoStartStreaming();
             }
-            // Persist mode: if "Only run in Play Mode" is OFF and streaming was active,
-            // auto-restart after any domain reload (play mode enter or exit).
             else if (!_requirePlayMode && EditorPrefs.GetBool(UniPeekConstants.PrefPersistStreaming, false))
             {
                 DoStartStreaming();
@@ -106,20 +96,11 @@ namespace UniPeek
 
         private void OnFocus()
         {
-            // When window regains focus, refresh QR texture in case IP changed
-            if (_streaming)
-                RefreshQR();
-        }
-
-        private void OnLostFocus()
-        {
-            if (_autoStopOnFocusLoss && _streaming)
-                StopStreaming();
+            if (_streaming) RefreshQR();
         }
 
         private void OnPlayModeChanged(PlayModeStateChange state)
         {
-            // Resume streaming that was deferred until after the domain reload.
             if (state == PlayModeStateChange.EnteredPlayMode && EditorPrefs.GetBool(PrefPendingStart, false))
             {
                 EditorPrefs.DeleteKey(PrefPendingStart);
@@ -127,9 +108,6 @@ namespace UniPeek
                 return;
             }
 
-            // Persist mode fallback: if OnEnable already ran and started streaming,
-            // _streaming is true and this is a no-op; otherwise catch the case where
-            // OnEnable fires first, subscribes this handler, then EnteredPlayMode fires.
             if (state == PlayModeStateChange.EnteredPlayMode
                 && !_requirePlayMode && !_streaming
                 && EditorPrefs.GetBool(UniPeekConstants.PrefPersistStreaming, false))
@@ -138,7 +116,6 @@ namespace UniPeek
                 return;
             }
 
-            // Stop streaming when play mode ends — only if the toggle requires it.
             if (_requirePlayMode && _streaming && state == PlayModeStateChange.ExitingPlayMode)
                 StopStreaming();
         }
@@ -151,97 +128,134 @@ namespace UniPeek
         {
             InitStyles();
 
-            using var scrollView = new EditorGUILayout.ScrollViewScope(_scrollPos);
-            _scrollPos = scrollView.scrollPosition;
-
             DrawHeader();
-            DrawStatus();
 
-            GUILayout.Space(6f);
-            DrawQRCode();
-            GUILayout.Space(6f);
+            using var scroll = new EditorGUILayout.ScrollViewScope(_scrollPos);
+            _scrollPos = scroll.scrollPosition;
 
-            DrawSettings();
-            GUILayout.Space(4f);
-            DrawStatsBar();
-            GUILayout.Space(6f);
-
+            GUILayout.Space(10f);
+            DrawStatusCard();
+            GUILayout.Space(10f);
             DrawMainButton();
-            GUILayout.Space(4f);
-            DrawReverseConnectionPanel();
-            GUILayout.Space(6f);
+            GUILayout.Space(8f);
+
+            DrawQRCode();
+
+            if (_streaming)
+            {
+                DrawStatsBar();
+                GUILayout.Space(8f);
+            }
+
+            DrawSectionLabel("Options");
+            DrawSettings();
+            GUILayout.Space(8f);
 
             DrawDeviceList();
-            GUILayout.Space(4f);
-            DrawProNotice();
+            DrawReverseConnectionPanel();
 
             GUILayout.FlexibleSpace();
             DrawFooter();
-
-            if(GUILayout.Button("Change Game View Resolution (for testing)"))
-            {
-                ChangeResolution();
-            }
         }
 
-        private void ChangeResolution()
-        {
-            GameViewResolutionHelper.AddCustomResolution(1920, 1080,"Test 1080p");
-        }
-
-        // ── Sections ──────────────────────────────────────────────────────────
+        // ── Header ────────────────────────────────────────────────────────────
 
         private void DrawHeader()
         {
             using var row = new EditorGUILayout.HorizontalScope(EditorStyles.toolbar);
 
             if (_logoTexture != null)
-                GUILayout.Label(_logoTexture, GUILayout.Width(20f), GUILayout.Height(20f));
+                GUILayout.Label(_logoTexture, GUILayout.Width(18f), GUILayout.Height(18f));
 
-            GUILayout.Label("UniPeek", _headerStyle, GUILayout.ExpandWidth(true));
+            GUILayout.Label("UniPeek", _titleStyle, GUILayout.ExpandWidth(true));
             GUILayout.Label($"v{UniPeekConstants.Version}", _versionStyle);
         }
 
-        private void DrawStatus()
+        // ── Status card ───────────────────────────────────────────────────────
+
+        private void DrawStatusCard()
         {
             var mgr   = ConnectionManager.Instance;
             var state = mgr.State;
 
-            Color dot;
-            string label;
+            Color  dotColor;
+            string primaryText;
+            string secondaryText = string.Empty;
+
             switch (state)
             {
                 case ConnectionState.Advertising:
-                    dot   = new Color(1f, 0.75f, 0f);   // amber
-                    label = "Waiting for device…";
+                    dotColor      = ColAmber;
+                    primaryText   = "Waiting for device…";
+                    secondaryText = $"{QRCodeGenerator.GetLocalIPv4()}:{UniPeekConstants.DefaultPort}";
                     break;
                 case ConnectionState.Connected:
-                    dot   = new Color(0.2f, 0.9f, 0.3f); // green
-                    int n = mgr.ConnectedDevices.Count;
-                    label = n == 1
-                        ? $"Connected — {mgr.ConnectedDevices[0].DeviceName}"
-                        : $"Connected — {n} devices";
+                    dotColor = ColGreen;
+                    int n    = mgr.ConnectedDevices.Count;
+                    primaryText   = n == 1 ? mgr.ConnectedDevices[0].DeviceName : $"{n} devices";
+                    secondaryText = "Connected";
                     break;
                 case ConnectionState.ReverseConnecting:
-                    dot   = new Color(0.3f, 0.6f, 1f);   // blue
-                    label = "Connecting (reverse)…";
+                    dotColor      = ColBlue;
+                    primaryText   = "Connecting…";
+                    secondaryText = "Reverse mode";
                     break;
                 default:
-                    dot   = new Color(0.5f, 0.5f, 0.5f); // grey
-                    label = "Disconnected";
+                    dotColor    = ColGrey;
+                    primaryText = "Not streaming";
                     break;
             }
 
-            using var row = new EditorGUILayout.HorizontalScope();
-            DrawColorDot(dot);
-            GUILayout.Label(label, _statusStyle);
+            EditorGUILayout.BeginVertical(EditorStyles.helpBox);
+            GUILayout.Space(6f);
+
+            using (new EditorGUILayout.HorizontalScope())
+            {
+                GUILayout.Space(6f);
+                DrawColorDot(dotColor);
+                GUILayout.Space(4f);
+                GUILayout.Label(primaryText, _statusTextStyle, GUILayout.ExpandWidth(true));
+                GUILayout.Space(6f);
+            }
+
+            if (!string.IsNullOrEmpty(secondaryText))
+            {
+                using (new EditorGUILayout.HorizontalScope())
+                {
+                    GUILayout.Space(28f);
+                    GUILayout.Label(secondaryText, EditorStyles.miniLabel);
+                }
+            }
+
+            GUILayout.Space(6f);
+            EditorGUILayout.EndVertical();
         }
+
+        // ── Main button ───────────────────────────────────────────────────────
+
+        private void DrawMainButton()
+        {
+            var prev = GUI.backgroundColor;
+            GUI.backgroundColor = _streaming
+                ? new Color(0.88f, 0.30f, 0.30f)
+                : new Color(0.28f, 0.76f, 0.44f);
+
+            if (GUILayout.Button(
+                    _streaming ? "■   Stop Streaming" : "▶   Start Streaming",
+                    GUILayout.Height(42f)))
+            {
+                if (_streaming) StopStreaming();
+                else            StartStreaming();
+            }
+
+            GUI.backgroundColor = prev;
+        }
+
+        // ── QR code ───────────────────────────────────────────────────────────
 
         private void DrawQRCode()
         {
             if (!_streaming) return;
-
-            // Only show QR when waiting — once connected, hide it to save space
             if (ConnectionManager.Instance.State == ConnectionState.Connected) return;
 
             RefreshQR();
@@ -249,104 +263,105 @@ namespace UniPeek
             if (_qrTexture == null)
             {
                 EditorGUILayout.HelpBox(
-                    "Could not generate QR code (check local network connection).",
+                    "Could not generate QR code — check local network connection.",
                     MessageType.Warning);
+                GUILayout.Space(6f);
                 return;
             }
 
-            float available = position.width - 32f;
-            float size      = Mathf.Min(available, 240f);
-
+            float size = Mathf.Min(position.width - 48f, 220f);
             using (new EditorGUILayout.HorizontalScope())
             {
                 GUILayout.FlexibleSpace();
-                GUILayout.Label(_qrTexture,
-                    GUILayout.Width(size), GUILayout.Height(size));
+                GUILayout.Label(_qrTexture, GUILayout.Width(size), GUILayout.Height(size));
                 GUILayout.FlexibleSpace();
             }
 
-            string ip = QRCodeGenerator.GetLocalIPv4();
-            EditorGUILayout.LabelField(
-                $"Scan with the UniPeek app  ·  {ip}:{UniPeekConstants.DefaultPort}",
+            GUILayout.Label(
+                "Scan with the UniPeek app to connect",
                 EditorStyles.centeredGreyMiniLabel);
+            GUILayout.Space(10f);
         }
+
+        // ── Stats bar ─────────────────────────────────────────────────────────
+
+        private void DrawStatsBar()
+        {
+            using var row = new EditorGUILayout.HorizontalScope(EditorStyles.helpBox);
+
+            if (_webRtcActive)
+            {
+                DrawColorDot(RttColor(_rttMs), small: true);
+                GUILayout.Space(2f);
+                GUILayout.Label("WebRTC", EditorStyles.miniLabel, GUILayout.Width(46f));
+                GUILayout.Label(
+                    _rttMs > 0f ? $"RTT {_rttMs:F0} ms" : "RTT —",
+                    EditorStyles.miniLabel, GUILayout.Width(64f));
+            }
+            else
+            {
+                GUILayout.Label($"FPS  {_captureFps:F1}", EditorStyles.miniLabel, GUILayout.Width(64f));
+                GUILayout.Label($"Enc  {_encodeMs:F0} ms", EditorStyles.miniLabel, GUILayout.Width(70f));
+            }
+
+            GUILayout.FlexibleSpace();
+            int c = ConnectionManager.Instance.ConnectedDevices.Count;
+            GUILayout.Label(c == 1 ? "1 client" : $"{c} clients", EditorStyles.miniLabel);
+        }
+
+        // ── Settings ──────────────────────────────────────────────────────────
 
         private void DrawSettings()
         {
             EditorGUI.BeginChangeCheck();
-
-            _requirePlayMode     = EditorGUILayout.Toggle("Only run in Play Mode", _requirePlayMode);
-            _autoStopOnFocusLoss = EditorGUILayout.Toggle("Stop on Focus Loss", _autoStopOnFocusLoss);
-
+            using (new EditorGUILayout.HorizontalScope())
+            {
+                GUILayout.Space(2f);
+                _requirePlayMode = EditorGUILayout.ToggleLeft(
+                    "Only run in Play Mode", _requirePlayMode);
+            }
             if (EditorGUI.EndChangeCheck())
                 SavePrefs();
 
             if (!_requirePlayMode)
             {
-            GUILayout.Space(4f);
-            EditorGUILayout.HelpBox(
-                "Recompiling scripts will cut the connection. Pro users have an automatic " +
-                "reconnect option. If 'Only run in Play Mode' is disabled, enabling it is " +
-                "recommended to avoid interruptions. Resolution, quality, and FPS are " +
-                "configured from the app.",
-                MessageType.Info);
+                GUILayout.Space(4f);
+                EditorGUILayout.HelpBox(
+                    "Recompiling will cut the connection. Pro users have automatic reconnect. " +
+                    "Enabling 'Only run in Play Mode' avoids interruptions.",
+                    MessageType.Info);
             }
         }
 
-        private void DrawStatsBar()
+        // ── Device list ───────────────────────────────────────────────────────
+
+        private void DrawDeviceList()
         {
-            if (!_streaming) return;
+            var devices = ConnectionManager.Instance.ConnectedDevices;
+            if (devices.Count == 0) return;
 
-            using var row = new EditorGUILayout.HorizontalScope(EditorStyles.helpBox);
+            DrawSectionLabel("Connected Devices");
 
-            if (_webRtcActive)
+            foreach (var d in devices)
             {
-                // WebRTC mode: show transport label + RTT indicator
-                Color dot = RttColor(_rttMs);
-                DrawColorDot(dot);
-                GUILayout.Label("WebRTC", GUILayout.Width(52f));
-                GUILayout.Label(_rttMs > 0f ? $"RTT: {_rttMs:F0} ms" : "RTT: —",
-                    GUILayout.Width(80f));
-            }
-            else
-            {
-                GUILayout.Label($"Capture FPS: {_captureFps:F1}", GUILayout.Width(120f));
-                GUILayout.Label($"Encode: {_encodeMs:F0} ms",     GUILayout.Width(90f));
+                using var card = new EditorGUILayout.HorizontalScope(EditorStyles.helpBox);
+                DrawColorDot(ColGreen);
+                GUILayout.Space(2f);
+                GUILayout.Label(d.DeviceName, GUILayout.ExpandWidth(true));
+                GUILayout.Label(
+                    d.ConnectedAt.ToLocalTime().ToString("HH:mm:ss"),
+                    EditorStyles.miniLabel, GUILayout.Width(52f));
             }
 
-            int clientCount = ConnectionManager.Instance.ConnectedDevices.Count;
-            GUILayout.Label($"Clients: {clientCount}", GUILayout.ExpandWidth(true));
+            GUILayout.Space(8f);
         }
 
-        private static Color RttColor(float rttMs)
-        {
-            if (rttMs <= 0f)                                return new Color(0.5f, 0.5f, 0.5f);
-            if (rttMs < UniPeekConstants.RttGreenMs)        return new Color(0.2f, 0.9f, 0.3f);
-            if (rttMs < UniPeekConstants.RttYellowMs)       return new Color(1f,   0.9f, 0f);
-            if (rttMs < UniPeekConstants.RttOrangeMs)       return new Color(1f,   0.5f, 0f);
-            return new Color(0.9f, 0.2f, 0.2f);
-        }
-
-        private void DrawMainButton()
-        {
-            Color prev = GUI.backgroundColor;
-            GUI.backgroundColor = _streaming
-                ? new Color(1f, 0.4f, 0.4f)
-                : new Color(0.4f, 0.85f, 0.5f);
-
-            string label = _streaming ? "■  Stop Streaming" : "▶  Start Streaming";
-            if (GUILayout.Button(label, GUILayout.Height(36f)))
-            {
-                if (_streaming) StopStreaming();
-                else            StartStreaming();
-            }
-            GUI.backgroundColor = prev;
-        }
+        // ── Reverse connection ────────────────────────────────────────────────
 
         private void DrawReverseConnectionPanel()
         {
             _showReversePanel = EditorGUILayout.Foldout(
-                _showReversePanel, "Reverse Connection (phone ← Unity)", true);
+                _showReversePanel, "Reverse Connection", toggleOnLabelClick: true);
 
             if (!_showReversePanel) return;
 
@@ -361,37 +376,22 @@ namespace UniPeek
             }
 
             EditorGUILayout.HelpBox(
-                "Use when the phone can't reach this machine " +
-                "(e.g. strict firewall). The app must be in 'Listen' mode.",
+                "Use when the phone can't reach this machine (e.g. strict firewall). " +
+                "The app must be in 'Listen' mode.",
                 MessageType.Info);
+
+            GUILayout.Space(6f);
         }
 
-        private void DrawDeviceList()
-        {
-            var devices = ConnectionManager.Instance.ConnectedDevices;
-            if (devices.Count == 0) return;
-
-            EditorGUILayout.LabelField("Connected Devices", EditorStyles.boldLabel);
-
-            foreach (var d in devices)
-            {
-                using var row = new EditorGUILayout.HorizontalScope(EditorStyles.helpBox);
-                DrawColorDot(new Color(0.2f, 0.9f, 0.3f));
-                GUILayout.Label(d.DeviceName, GUILayout.ExpandWidth(true));
-                GUILayout.Label(d.ConnectedAt.ToLocalTime().ToString("HH:mm:ss"),
-                    EditorStyles.miniLabel, GUILayout.Width(60f));
-            }
-        }
-
-        private void DrawProNotice()
-        {
-            EditorGUILayout.HelpBox(
-                "Pro features (multi-device, 1080p, 60 fps) are unlocked via the UniPeek app.",
-                MessageType.None);
-        }
+        // ── Footer ────────────────────────────────────────────────────────────
 
         private void DrawFooter()
         {
+            GUILayout.Label(
+                "Pro features (multi-device, 1080p, 60 fps) unlocked via the UniPeek app.",
+                EditorStyles.centeredGreyMiniLabel);
+            GUILayout.Space(2f);
+
             using var row = new EditorGUILayout.HorizontalScope(EditorStyles.toolbar);
             GUILayout.Label($"Port {UniPeekConstants.DefaultPort}", EditorStyles.miniLabel);
             GUILayout.FlexibleSpace();
@@ -399,41 +399,66 @@ namespace UniPeek
             if (GUILayout.Button("Docs", EditorStyles.toolbarButton, GUILayout.Width(38f)))
                 Application.OpenURL("https://github.com/your-org/UniPeek#readme");
 
-            if (GUILayout.Button("Reset FW", EditorStyles.toolbarButton, GUILayout.Width(56f)))
+            if (GUILayout.Button("Reset FW", EditorStyles.toolbarButton, GUILayout.Width(58f)))
                 FirewallHelper.ResetAndReConfigure();
         }
 
-        // ── Style / utility helpers ────────────────────────────────────────────
+        // ── Utilities ─────────────────────────────────────────────────────────
+
+        private void DrawSectionLabel(string title)
+        {
+            GUILayout.Space(2f);
+            using var row = new EditorGUILayout.HorizontalScope();
+            GUILayout.Label(title.ToUpper(), _sectionLabelStyle);
+            GUILayout.Space(4f);
+        }
+
+        private static void DrawColorDot(Color color, bool small = false)
+        {
+            float w = small ? 14f : 16f;
+            var prev = GUI.color;
+            GUI.color = color;
+            GUILayout.Label("●", GUILayout.Width(w), GUILayout.Height(w));
+            GUI.color = prev;
+        }
+
+        private static Color RttColor(float rttMs)
+        {
+            if (rttMs <= 0f)                          return ColGrey;
+            if (rttMs < UniPeekConstants.RttGreenMs)  return ColGreen;
+            if (rttMs < UniPeekConstants.RttYellowMs) return new Color(1f, 0.9f, 0f);
+            if (rttMs < UniPeekConstants.RttOrangeMs) return new Color(1f, 0.5f, 0f);
+            return new Color(0.9f, 0.2f, 0.2f);
+        }
 
         private void InitStyles()
         {
             if (_stylesInitialized) return;
             _stylesInitialized = true;
 
-            _headerStyle = new GUIStyle(EditorStyles.boldLabel)
+            _titleStyle = new GUIStyle(EditorStyles.boldLabel)
             {
-                fontSize  = 14,
+                fontSize  = 13,
                 alignment = TextAnchor.MiddleLeft,
             };
 
             _versionStyle = new GUIStyle(EditorStyles.miniLabel)
             {
                 alignment = TextAnchor.MiddleRight,
-                normal    = { textColor = new Color(0.6f, 0.6f, 0.6f) },
+                normal    = { textColor = new Color(0.55f, 0.55f, 0.55f) },
             };
 
-            _statusStyle = new GUIStyle(EditorStyles.label)
+            _statusTextStyle = new GUIStyle(EditorStyles.label)
             {
-                fontStyle = FontStyle.Italic,
+                fontSize  = 12,
+                fontStyle = FontStyle.Bold,
             };
-        }
 
-        private static void DrawColorDot(Color color)
-        {
-            var prev = GUI.color;
-            GUI.color = color;
-            GUILayout.Label("●", GUILayout.Width(16f), GUILayout.Height(16f));
-            GUI.color = prev;
+            _sectionLabelStyle = new GUIStyle(EditorStyles.miniLabel)
+            {
+                fontStyle = FontStyle.Bold,
+                normal    = { textColor = new Color(0.50f, 0.50f, 0.50f) },
+            };
         }
 
         // ─────────────────────────────────────────────────────────────────────
@@ -444,23 +469,18 @@ namespace UniPeek
         {
             if (_streaming) return;
 
-            // Persist settings so they survive a domain reload.
             SavePrefs();
             Application.runInBackground = true;
 
             if (_requirePlayMode && !EditorApplication.isPlaying)
             {
-                // Setting isPlaying triggers a domain reload which destroys the
-                // ConnectionManager singleton and all its background threads before
-                // streaming would even begin.  Instead, plant a flag in EditorPrefs
-                // (which survives the reload) and finish starting inside EnteredPlayMode /
-                // OnEnable — whichever fires first after the domain is back up.
+                // Setting isPlaying triggers a domain reload — plant a flag so streaming
+                // resumes once the domain is back up (EnteredPlayMode / OnEnable).
                 EditorPrefs.SetBool(PrefPendingStart, true);
                 EditorApplication.isPlaying = true;
                 return;
             }
 
-            // Either already in play mode, or not requiring play mode — start immediately.
             DoStartStreaming();
         }
 
@@ -469,8 +489,6 @@ namespace UniPeek
             ConnectionManager.Instance.StartStreaming();
             _streaming = true;
 
-            // Mark streaming as persistent so it auto-restarts after domain reloads
-            // when "Only run in Play Mode" is OFF.
             if (!_requirePlayMode)
                 EditorPrefs.SetBool(UniPeekConstants.PrefPersistStreaming, true);
 
@@ -483,48 +501,47 @@ namespace UniPeek
         {
             if (!_streaming) return;
             ConnectionManager.Instance.StopStreaming();
-            _streaming = false;
-            EditorPrefs.DeleteKey(UniPeekConstants.PrefPersistStreaming);
+            _streaming  = false;
             _captureFps = 0f;
             _encodeMs   = 0f;
+            EditorPrefs.DeleteKey(UniPeekConstants.PrefPersistStreaming);
             DestroyQR();
             Repaint();
         }
 
         // ─────────────────────────────────────────────────────────────────────
-        // ConnectionManager event subscriptions
+        // ConnectionManager subscriptions
         // ─────────────────────────────────────────────────────────────────────
 
         private void SubscribeToManager()
         {
             var mgr = ConnectionManager.Instance;
-            mgr.StateChanged      += OnStateChanged;
-            mgr.DeviceConnected   += OnDeviceConnected;
-            mgr.DeviceDisconnected+= OnDeviceDisconnected;
-            mgr.StatsUpdated      += OnStatsUpdated;
-            mgr.RttUpdated        += OnRttUpdated;
+            mgr.StateChanged       += OnStateChanged;
+            mgr.DeviceConnected    += OnDeviceConnected;
+            mgr.DeviceDisconnected += OnDeviceDisconnected;
+            mgr.StatsUpdated       += OnStatsUpdated;
+            mgr.RttUpdated         += OnRttUpdated;
         }
 
         private void UnsubscribeFromManager()
         {
-            // Guard against the manager being disposed before the window
             if (ConnectionManager.Instance == null) return;
             var mgr = ConnectionManager.Instance;
-            mgr.StateChanged      -= OnStateChanged;
-            mgr.DeviceConnected   -= OnDeviceConnected;
-            mgr.DeviceDisconnected-= OnDeviceDisconnected;
-            mgr.StatsUpdated      -= OnStatsUpdated;
-            mgr.RttUpdated        -= OnRttUpdated;
+            mgr.StateChanged       -= OnStateChanged;
+            mgr.DeviceConnected    -= OnDeviceConnected;
+            mgr.DeviceDisconnected -= OnDeviceDisconnected;
+            mgr.StatsUpdated       -= OnStatsUpdated;
+            mgr.RttUpdated         -= OnRttUpdated;
         }
 
-        private void OnStateChanged(ConnectionState _) => Repaint();
-        private void OnDeviceConnected(DeviceInfo _)   => Repaint();
-        private void OnDeviceDisconnected(DeviceInfo _)=> Repaint();
+        private void OnStateChanged(ConnectionState _)  => Repaint();
+        private void OnDeviceConnected(DeviceInfo _)    => Repaint();
+        private void OnDeviceDisconnected(DeviceInfo _) => Repaint();
 
         private void OnStatsUpdated(float fps, float encodeMs)
         {
-            _captureFps  = fps;
-            _encodeMs    = encodeMs;
+            _captureFps   = fps;
+            _encodeMs     = encodeMs;
             _webRtcActive = ConnectionManager.Instance.WebRtcActive;
             Repaint();
         }
@@ -541,32 +558,19 @@ namespace UniPeek
         // ─────────────────────────────────────────────────────────────────────
 
         private void RefreshQR()
-        {
-            _qrTexture = QRCodeGenerator.GetConnectionQR(
+            => _qrTexture = QRCodeGenerator.GetConnectionQR(
                 UniPeekConstants.DefaultPort, pixelsPerModule: 8);
-        }
 
-        private void DestroyQR()
-        {
-            // QRCodeGenerator caches and manages its own texture lifetime;
-            // just null our reference.
-            _qrTexture = null;
-        }
+        private void DestroyQR() => _qrTexture = null;
 
         // ─────────────────────────────────────────────────────────────────────
-        // EditorPrefs persistence
+        // EditorPrefs
         // ─────────────────────────────────────────────────────────────────────
 
         private void LoadPrefs()
-        {
-            _requirePlayMode     = EditorPrefs.GetBool(UniPeekConstants.PrefAutoStopPlay,  true);
-            _autoStopOnFocusLoss = EditorPrefs.GetBool(UniPeekConstants.PrefAutoStopFocus, false);
-        }
+            => _requirePlayMode = EditorPrefs.GetBool(UniPeekConstants.PrefAutoStopPlay, true);
 
         private void SavePrefs()
-        {
-            EditorPrefs.SetBool(UniPeekConstants.PrefAutoStopPlay,  _requirePlayMode);
-            EditorPrefs.SetBool(UniPeekConstants.PrefAutoStopFocus, _autoStopOnFocusLoss);
-        }
+            => EditorPrefs.SetBool(UniPeekConstants.PrefAutoStopPlay, _requirePlayMode);
     }
 }
