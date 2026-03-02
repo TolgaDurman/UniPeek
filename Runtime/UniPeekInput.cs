@@ -14,5 +14,11 @@ namespace UniPeek
         /// Argument is the normalised position: x=0 left, x=1 right, y=0 top, y=1 bottom.
         /// </summary>
         public static Action<Vector2> OnTouch;
+
+        /// <summary>
+        /// Fired on the main thread for every touch event with full details.
+        /// Args: fingerId, phase ("began"|"moved"|"ended"|"canceled"), normalised position.
+        /// </summary>
+        public static Action<int, string, Vector2> OnTouchDetailed;
     }
 }

@@ -521,7 +521,9 @@ namespace UniPeek
             if (msg == null) return;
             UniPeekConstants.Log($"[Input] Touch phase={msg.phase} x={msg.x:F3} y={msg.y:F3} finger={msg.fingerId}");
             InputInjector.InjectTouch(msg.phase, msg.x, msg.y, msg.fingerId);
-            UniPeekInput.OnTouch?.Invoke(new Vector2(msg.x, msg.y));
+            var pos = new Vector2(msg.x, msg.y);
+            UniPeekInput.OnTouch?.Invoke(pos);
+            UniPeekInput.OnTouchDetailed?.Invoke(msg.fingerId, msg.phase, pos);
         }
 
         // ── WebRTC orchestration ──────────────────────────────────────────────

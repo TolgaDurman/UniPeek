@@ -244,8 +244,10 @@ namespace UniPeek
                 cam.targetTexture = prevTarget;
 
                 RenderTexture.active = rt;
-                // linear: false → texture is sRGB, matching the RT above.
-                toEncode = new Texture2D(_targetWidth, _targetHeight, TextureFormat.RGB24, false, false);
+                // In a Linear project ReadPixels converts the sRGB RT data back to linear, so
+                // mark the texture as linear=true so EncodeToJPG applies the sRGB gamma curve once.
+                toEncode = new Texture2D(_targetWidth, _targetHeight, TextureFormat.RGB24, false,
+                    PlayerSettings.colorSpace == ColorSpace.Linear);
                 toEncode.ReadPixels(new Rect(0, 0, _targetWidth, _targetHeight), 0, 0);
                 toEncode.Apply();
                 RenderTexture.active = prevActive;
@@ -285,23 +287,19 @@ namespace UniPeek
 
             try
             {
-                // Always blit through an sRGB RT — even when the size already matches.
-                //
-                // ScreenCapture.CaptureScreenshotAsTexture() returns sRGB pixel data
-                // (the final display-ready image).  In a Linear-colour-space project,
-                // EncodeToJPG would otherwise treat those bytes as linear values and
-                // apply sRGB gamma encoding a second time, producing the washed-out
-                // "double gamma" look on the phone.  Blitting to an sRGB RT and reading
-                // back into an sRGB Texture2D guarantees the bytes reach EncodeToJPG
-                // without any colour-space conversion regardless of project settings.
+                // Blit to an sRGB RT to scale to the target resolution.
+                // In a Linear project, ReadPixels from an sRGB RT converts the data back to
+                // linear space. Marking the texture as linear=true tells EncodeToJPG to apply
+                // the sRGB gamma curve exactly once, matching what the Game View displays.
                 rt = RenderTexture.GetTemporary(
                     _targetWidth, _targetHeight, 0,
                     RenderTextureFormat.ARGB32, RenderTextureReadWrite.sRGB);
                 Graphics.Blit(captured, rt);
 
+                bool linearProject = PlayerSettings.colorSpace == ColorSpace.Linear;
                 var prev = RenderTexture.active;
                 RenderTexture.active = rt;
-                toEncode = new Texture2D(_targetWidth, _targetHeight, TextureFormat.RGB24, false, false);
+                toEncode = new Texture2D(_targetWidth, _targetHeight, TextureFormat.RGB24, false, linearProject);
                 toEncode.ReadPixels(new Rect(0, 0, _targetWidth, _targetHeight), 0, 0);
                 toEncode.Apply();
                 RenderTexture.active = prev;
