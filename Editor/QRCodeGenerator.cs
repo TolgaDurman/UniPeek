@@ -125,19 +125,19 @@ namespace UniPeek
         // ── Helpers ───────────────────────────────────────────────────────────
 
         /// <summary>
-        /// Builds the Universal Link connection payload.
-        /// Format: <c>https://unipeek.app/connect?ip=X&amp;port=Y&amp;name=MACHINE</c>
+        /// Builds the custom-scheme connection payload.
+        /// Format: <c>unipeek://connect?ip=X&amp;port=Y&amp;name=MACHINE</c>
         /// <para>
-        /// When the app is installed, iOS/Android intercept this URL and open UniPeek
-        /// directly with the IP and port pre-filled.  When not installed, the browser
-        /// opens the download page at <c>unipeek.app/connect</c>.
+        /// iOS and Android recognise the <c>unipeek://</c> scheme (registered in
+        /// Info.plist / AndroidManifest) and open the UniPeek app directly without
+        /// routing through a web browser.
         /// </para>
         /// </summary>
         private static string BuildPayload(string ip, int port)
         {
             string raw  = UnityEditor.EditorPrefs.GetString(UniPeekConstants.PrefEditorName, string.Empty);
             string name = Uri.EscapeDataString(string.IsNullOrWhiteSpace(raw) ? Environment.MachineName : raw);
-            return $"https://unipeek.app/connect?ip={ip}&port={port}&name={name}";
+            return $"unipeek://connect?ip={ip}&port={port}&name={name}";
         }
 
         private static void DestroyCachedTexture()
