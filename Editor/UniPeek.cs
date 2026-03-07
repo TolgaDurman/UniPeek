@@ -45,9 +45,6 @@ namespace UniPeek
         /// <summary>EditorPrefs key for the auto-stop-on-play-mode toggle.</summary>
         public const string PrefAutoStopPlay = "UniPeek_AutoStopPlay";
 
-        /// <summary>EditorPrefs key for the auto-stop-on-focus-loss toggle.</summary>
-        public const string PrefAutoStopFocus = "UniPeek_AutoStopFocus";
-
         /// <summary>EditorPrefs key for the user-defined editor display name (shown in Flutter discovery).</summary>
         public const string PrefEditorName = "UniPeek_EditorName";
 

@@ -5,7 +5,6 @@ using System.Net.Sockets;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
-using UnityEngine;
 
 namespace UniPeek
 {
@@ -88,14 +87,14 @@ namespace UniPeek
             }
             catch (Exception e)
             {
-                Debug.LogError("[mDNS] Socket error: " + e.Message);
+                UniPeekConstants.LogError("[mDNS] Socket error: " + e.Message);
                 return;
             }
 
             _ = ListenLoop(_cts.Token);
             _ = AnnounceLoop(_cts.Token);
 
-            Debug.Log($"[mDNS] Advertising {_machineName}._unipeek._tcp.local on {_localIp}:{_port}");
+            UniPeekConstants.Log($"[mDNS] Advertising {_machineName}._unipeek._tcp.local on {_localIp}:{_port}");
         }
 
         // ─────────────────────────────────────────────
@@ -125,7 +124,7 @@ namespace UniPeek
                 try { client.Close(); client.Dispose(); } catch { }
             }
 
-            Debug.Log("[mDNS] Stopped");
+            UniPeekConstants.Log("[mDNS] Stopped");
         }
 
         public void Dispose() => Stop();
@@ -148,7 +147,7 @@ namespace UniPeek
                 }
                 catch (Exception e)
                 {
-                    Debug.LogWarning("[mDNS] Announce error: " + e.Message);
+                    UniPeekConstants.LogWarning("[mDNS] Announce error: " + e.Message);
                 }
 
                 try { await Task.Delay(5000, ct); }
@@ -169,7 +168,7 @@ namespace UniPeek
                 catch { break; }
 
                 try { HandleQuery(result.Buffer, result.RemoteEndPoint); }
-                catch (Exception e) { Debug.LogWarning("[mDNS] HandleQuery error: " + e.Message); }
+                catch (Exception e) { UniPeekConstants.LogWarning("[mDNS] HandleQuery error: " + e.Message); }
             }
         }
 

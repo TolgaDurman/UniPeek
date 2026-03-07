@@ -1,6 +1,5 @@
 using System;
 using System.Diagnostics;
-using System.Threading;
 using System.Threading.Tasks;
 using UnityEngine;
 
@@ -31,15 +30,11 @@ namespace UniPeek
         private UniPeekWebSocketServer _server;
         private int   _quality = 75;
 
-        // ── Stats (updated from background thread, read from main thread) ─────
+        // ── Stats ─────────────────────────────────────────────────────────────
         private volatile float _lastEncodeMs;
-        private volatile int   _encodedFrames;
 
         /// <summary>Milliseconds taken by the most recent encode operation.</summary>
         public float LastEncodeMs => _lastEncodeMs;
-
-        /// <summary>Total number of frames encoded since streaming began.</summary>
-        public int EncodedFrames => _encodedFrames;
 
         /// <summary>
         /// <c>true</c> while an encode is in progress.
@@ -77,8 +72,7 @@ namespace UniPeek
         /// </summary>
         public void ResetStats()
         {
-            _lastEncodeMs  = 0f;
-            _encodedFrames = 0;
+            _lastEncodeMs = 0f;
         }
 
         /// <summary>
@@ -127,7 +121,6 @@ namespace UniPeek
             {
                 sw.Stop();
                 _lastEncodeMs = (float)sw.Elapsed.TotalMilliseconds;
-                Interlocked.Increment(ref _encodedFrames);
                 UnityEngine.Object.DestroyImmediate(texture);
                 _encoding = false;
             }

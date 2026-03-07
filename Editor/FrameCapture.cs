@@ -73,20 +73,12 @@ namespace UniPeek
         }
 
         // ── Stats ─────────────────────────────────────────────────────────────
-        private int    _capturedFrames;
-        private int    _droppedFrames;
         private double _fpsWindowStart;
         private int    _fpsWindowCount;
         private float  _smoothedFps;
 
         /// <summary>Smoothed capture rate displayed in the Editor window (frames/second).</summary>
         public float SmoothedFps => _smoothedFps;
-
-        /// <summary>Total frames captured since streaming began.</summary>
-        public int CapturedFrames => _capturedFrames;
-
-        /// <summary>Total frames dropped (encoder busy or no client) since streaming began.</summary>
-        public int DroppedFrames => _droppedFrames;
 
         // ── Constructor ───────────────────────────────────────────────────────
 
@@ -109,10 +101,8 @@ namespace UniPeek
         public void Start()
         {
             if (_active) return;
-            _active               = true;
-            _capturedFrames       = 0;
-            _droppedFrames        = 0;
-            _fpsWindowStart       = EditorApplication.timeSinceStartup;
+            _active         = true;
+            _fpsWindowStart = EditorApplication.timeSinceStartup;
             _fpsWindowCount       = 0;
             _smoothedFps          = 0f;
             _lastCaptureTime      = EditorApplication.timeSinceStartup - _interval;
@@ -178,7 +168,7 @@ namespace UniPeek
 
         private void CaptureFromCamera()
         {
-            if (_encoder.IsEncoding) { _droppedFrames++; return; }
+            if (_encoder.IsEncoding) return;
 
             // Prefer Camera.main; fall back to any enabled camera
             var cam = Camera.main;
@@ -188,7 +178,7 @@ namespace UniPeek
                 cam = all.Length > 0 ? all[0] : null;
             }
 
-            if (cam == null) { _droppedFrames++; return; }
+            if (cam == null) return;
 
             RenderTexture rt        = null;
             RenderTexture prevActive = RenderTexture.active;
@@ -217,9 +207,7 @@ namespace UniPeek
                 toEncode.Apply();
                 RenderTexture.active = prevActive;
 
-                bool accepted = _encoder.SubmitFrame(toEncode);
-                if (accepted) { toEncode = null; _capturedFrames++; UpdateFpsStats(); }
-                else _droppedFrames++;
+                if (_encoder.SubmitFrame(toEncode)) { toEncode = null; UpdateFpsStats(); }
             }
             catch (Exception ex)
             {
@@ -238,7 +226,7 @@ namespace UniPeek
 
         private void CaptureFromCameraAsync()
         {
-            if (_asyncRequestInFlight || _encoder.IsEncoding) { _droppedFrames++; return; }
+            if (_asyncRequestInFlight || _encoder.IsEncoding) return;
 
             var cam = Camera.main;
             if (cam == null)
@@ -246,7 +234,7 @@ namespace UniPeek
                 var all = Camera.allCameras;
                 cam = all.Length > 0 ? all[0] : null;
             }
-            if (cam == null) { _droppedFrames++; return; }
+            if (cam == null) return;
 
             RenderTexture rt        = null;
             var           prevTarget = cam.targetTexture;
@@ -278,8 +266,8 @@ namespace UniPeek
                 RenderTexture.ReleaseTemporary(rt);
                 _asyncRequestInFlight = false;
 
-                if (req.hasError) { _droppedFrames++; return; }
-                if (_encoder.IsEncoding) { _droppedFrames++; return; }
+                if (req.hasError) return;
+                if (_encoder.IsEncoding) return;
 
                 Texture2D tex = null;
                 try
@@ -288,9 +276,7 @@ namespace UniPeek
                     tex.LoadRawTextureData(req.GetData<byte>());
                     tex.Apply();
 
-                    bool accepted = _encoder.SubmitFrame(tex);
-                    if (accepted) { tex = null; _capturedFrames++; UpdateFpsStats(); }
-                    else _droppedFrames++;
+                    if (_encoder.SubmitFrame(tex)) { tex = null; UpdateFpsStats(); }
                 }
                 catch (Exception ex)
                 {

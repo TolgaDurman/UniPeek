@@ -100,15 +100,6 @@ namespace UniPeek
         /// <summary>Active frame capture strategy.</summary>
         public CaptureMethod ActiveCaptureMethod { get; private set; } = CaptureMethod.CameraRender;
 
-        /// <summary>Width reported in the last orientation message from the host device (0 if none received).</summary>
-        public int LastOrientationWidth { get; private set; }
-
-        /// <summary>Height reported in the last orientation message from the host device (0 if none received).</summary>
-        public int LastOrientationHeight { get; private set; }
-
-        /// <summary>Device name associated with the last orientation message.</summary>
-        public string LastOrientationDeviceName { get; private set; }
-
         // ── Internal components ───────────────────────────────────────────────
         private UniPeekWebSocketServer _wsServer;
         private MdnsAdvertiser         _mdns;
@@ -252,9 +243,6 @@ namespace UniPeek
             WebRtcActive = false;
             _rttSamples.Clear();
 
-            LastOrientationWidth      = 0;
-            LastOrientationHeight     = 0;
-            LastOrientationDeviceName = null;
             UnhookEditorUpdate();
             QRCodeGenerator.Invalidate();
             SetState(ConnectionState.Disconnected);
@@ -488,14 +476,6 @@ namespace UniPeek
                     UniPeekConstants.Log($"[Auth] Host session set: {hello?.deviceName ?? sessionId}");
                 }
 
-                // Seed native dimensions from hello if orientation message hasn't arrived yet.
-                if (hello?.width > 0 && hello?.height > 0 && LastOrientationWidth == 0)
-                {
-                    LastOrientationWidth      = hello.width;
-                    LastOrientationHeight     = hello.height;
-                    LastOrientationDeviceName = hello.deviceName ?? sessionId;
-                    UniPeekConstants.Log($"[WS] Native dims from hello: {hello.width}x{hello.height}");
-                }
             });
 
             // Overwrite the device name stored at connect-time (which fell back to the
