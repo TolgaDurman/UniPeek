@@ -155,7 +155,6 @@ namespace UniPeek
             GUILayout.Space(8f);
 
             DrawDeviceList();
-            DrawMatchResolutionButton();
             DrawReverseConnectionPanel();
 
             GUILayout.FlexibleSpace();
@@ -347,6 +346,27 @@ namespace UniPeek
                     "Enabling 'Only run in Play Mode' avoids interruptions.",
                     MessageType.Info);
             }
+
+            GUILayout.Space(4f);
+            var mgr = ConnectionManager.Instance;
+            EditorGUI.BeginChangeCheck();
+            var newMethod = (CaptureMethod)EditorGUILayout.EnumPopup("Capture Method", mgr.ActiveCaptureMethod);
+            if (EditorGUI.EndChangeCheck())
+                mgr.SetCaptureMethod(newMethod);
+
+            switch (mgr.ActiveCaptureMethod)
+            {
+                case CaptureMethod.CameraRender:
+                    EditorGUILayout.HelpBox(
+                        "Camera.Render() → ReadPixels. Synchronous. Works in Edit + Play Mode.",
+                        MessageType.None);
+                    break;
+                case CaptureMethod.AsyncGPUReadback:
+                    EditorGUILayout.HelpBox(
+                        "Camera.Render() → AsyncGPUReadback. Non-blocking, ~1 frame extra latency.",
+                        MessageType.None);
+                    break;
+            }
         }
 
         // ── Device list ───────────────────────────────────────────────────────
@@ -370,23 +390,6 @@ namespace UniPeek
             }
 
             GUILayout.Space(8f);
-        }
-
-        // ── Match device resolution ───────────────────────────────────────────
-
-        private void DrawMatchResolutionButton()
-        {
-            var mgr = ConnectionManager.Instance;
-            if (mgr.LastOrientationWidth <= 0 || mgr.LastOrientationHeight <= 0) return;
-
-            int    w    = mgr.LastOrientationWidth;
-            int    h    = mgr.LastOrientationHeight;
-            string name = mgr.LastOrientationDeviceName ?? "Device";
-
-            if (GUILayout.Button($"Match Game View  ·  {name}  ({w}×{h})", GUILayout.Height(28f)))
-                GameViewResolutionHelper.SetResolution(w, h, name);
-
-            GUILayout.Space(4f);
         }
 
         // ── Reverse connection ────────────────────────────────────────────────

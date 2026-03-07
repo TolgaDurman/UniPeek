@@ -6,8 +6,17 @@ using UnityEditorInternal;
 
 namespace UniPeek
 {
+    /// <summary>How the Game View size entry is expressed.</summary>
+    public enum GameViewSizeMode
+    {
+        /// <summary>Exact pixel dimensions — e.g. 1080 × 2340.</summary>
+        FixedResolution,
+        /// <summary>Aspect ratio only — e.g. 9:19.5 — Game View scales to window size.</summary>
+        AspectRatio,
+    }
+
     /// <summary>
-    /// Sets the Game View to a connected device's resolution.
+    /// Sets the Game View to a connected device's resolution or aspect ratio.
     /// Call <see cref="SetResolution"/> from a button — safe to call from OnGUI.
     /// </summary>
     public static class GameViewResolutionHelper
@@ -19,12 +28,13 @@ namespace UniPeek
         /// "UniPeek - {deviceName}" at the given dimensions and selects it.
         /// Deferred one editor tick so it is safe to invoke from an OnGUI button handler.
         /// </summary>
-        public static void SetResolution(int width, int height, string deviceName)
+        public static void SetResolution(int width, int height, string deviceName,
+            GameViewSizeMode mode = GameViewSizeMode.AspectRatio)
         {
-            EditorApplication.delayCall += () => Apply(width, height, deviceName);
+            EditorApplication.delayCall += () => Apply(width, height, deviceName, mode);
         }
 
-        private static void Apply(int width, int height, string deviceName)
+        private static void Apply(int width, int height, string deviceName, GameViewSizeMode mode)
         {
             try
             {
@@ -70,12 +80,24 @@ namespace UniPeek
                 // Record the current count — the new entry will land at exactly this position.
                 int idx = (getTexts.Invoke(group, null) as string[]).Length;
 
+                // Resolve size type and values.
+                string enumName  = mode == GameViewSizeMode.AspectRatio ? "AspectRatio" : "FixedResolution";
+                var    sizeType  = Enum.Parse(gameViewSizeTypeEnum, enumName);
+                int    sizeW     = width;
+                int    sizeH     = height;
+                if (mode == GameViewSizeMode.AspectRatio)
+                {
+                    // Reduce to a simple ratio so the label stays clean (e.g. 1080×2340 → 6:13).
+                    int gcd = GCD(width, height);
+                    sizeW = width  / gcd;
+                    sizeH = height / gcd;
+                }
+
                 // Add the fresh entry.
-                string label     = $"{LabelPrefix}{deviceName}";
-                var    ctor      = gameViewSizeType.GetConstructor(
+                string label = $"{LabelPrefix}{deviceName}";
+                var    ctor  = gameViewSizeType.GetConstructor(
                     new Type[] { gameViewSizeTypeEnum, typeof(int), typeof(int), typeof(string) });
-                var    fixedType = Enum.Parse(gameViewSizeTypeEnum, "FixedResolution");
-                addCustom.Invoke(group, new object[] { ctor.Invoke(new object[] { fixedType, width, height, label }) });
+                addCustom.Invoke(group, new object[] { ctor.Invoke(new object[] { sizeType, sizeW, sizeH, label }) });
 
                 // Verify it was actually added.
                 int countAfter = (getTexts.Invoke(group, null) as string[]).Length;
@@ -96,12 +118,17 @@ namespace UniPeek
                     BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
                 prop?.SetValue(win, idx, null);
 
-                Debug.Log("[UniPeek] Game View -> " + width + "x" + height + "  (" + label + ")");
+                string modeLabel = mode == GameViewSizeMode.AspectRatio
+                    ? $"{sizeW}:{sizeH} (aspect ratio)"
+                    : $"{width}×{height} (fixed)";
+                Debug.Log($"[UniPeek] Game View -> {modeLabel}  ({label})");
             }
             catch (Exception ex)
             {
                 Debug.LogError("[UniPeek] SetResolution failed: " + ex.Message + "\n" + ex.StackTrace);
             }
         }
+
+        private static int GCD(int a, int b) => b == 0 ? a : GCD(b, a % b);
     }
 }

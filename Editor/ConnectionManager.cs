@@ -97,6 +97,9 @@ namespace UniPeek
         /// <summary>Whether a WebRTC connection is currently active.</summary>
         public bool WebRtcActive { get; private set; }
 
+        /// <summary>Active frame capture strategy.</summary>
+        public CaptureMethod ActiveCaptureMethod { get; private set; } = CaptureMethod.CameraRender;
+
         /// <summary>Width reported in the last orientation message from the host device (0 if none received).</summary>
         public int LastOrientationWidth { get; private set; }
 
@@ -192,13 +195,13 @@ namespace UniPeek
             };
             _wsServer.HelloReceived       += OnHelloReceived;
             _wsServer.PongReceived        += OnPongReceived;
-            _wsServer.OrientationReceived += OnOrientationReceived;
-
 #if UNITY_WEBRTC
             _wsServer.AnswerReceived    += OnAnswerReceived;
             _wsServer.CandidateReceived += OnCandidateReceived;
 #endif
             _wsServer.Start();
+
+            EditorApplication.playModeStateChanged += OnPlayModeStateChanged;
 
             // Boot mDNS
             string localIp    = QRCodeGenerator.GetLocalIPv4();
@@ -209,6 +212,7 @@ namespace UniPeek
             // Boot encoder + capture
             _encoder = new FrameEncoder(_wsServer, Config.Quality);
             _capture = new FrameCapture(_encoder, Config.Width, Config.Height, Config.FpsCap);
+            _capture.SetCaptureMethod(ActiveCaptureMethod);
             _capture.Start();
 
             HookEditorUpdate();
@@ -223,6 +227,8 @@ namespace UniPeek
 #if UNITY_WEBRTC
             TearDownWebRTC();
 #endif
+
+            EditorApplication.playModeStateChanged -= OnPlayModeStateChanged;
 
             _capture?.Stop();
             _capture = null;
@@ -286,6 +292,13 @@ namespace UniPeek
                 SetState(ConnectionState.Advertising);
             });
             _reverseClient.ConnectAsync();
+        }
+
+        /// <summary>Switches the frame capture strategy at runtime.</summary>
+        public void SetCaptureMethod(CaptureMethod method)
+        {
+            ActiveCaptureMethod = method;
+            _capture?.SetCaptureMethod(method);
         }
 
         /// <summary>
@@ -453,6 +466,11 @@ namespace UniPeek
                 }
             }
 
+            // Resolution is always sent in portrait order (short × long).
+            // Swap when the device is landscape so the capture RT matches the screen.
+            if (msg.landscape && width < height) { int t = width; width = height; height = t; }
+            else if (!msg.landscape && width > height) { int t = width; width = height; height = t; }
+
             int quality = msg.quality > 0 ? Mathf.Clamp(msg.quality, 1, 100) : Config.Quality;
             int fps     = msg.fps     > 0 ? Mathf.Clamp(msg.fps, 1, 120)     : Config.FpsCap;
 
@@ -468,6 +486,15 @@ namespace UniPeek
                 {
                     _hostSessionId = sessionId;
                     UniPeekConstants.Log($"[Auth] Host session set: {hello?.deviceName ?? sessionId}");
+                }
+
+                // Seed native dimensions from hello if orientation message hasn't arrived yet.
+                if (hello?.width > 0 && hello?.height > 0 && LastOrientationWidth == 0)
+                {
+                    LastOrientationWidth      = hello.width;
+                    LastOrientationHeight     = hello.height;
+                    LastOrientationDeviceName = hello.deviceName ?? sessionId;
+                    UniPeekConstants.Log($"[WS] Native dims from hello: {hello.width}x{hello.height}");
                 }
             });
 
@@ -501,19 +528,27 @@ namespace UniPeek
             }
 #endif
             UniPeekConstants.Log($"[WS] Hello from {hello?.client ?? "unknown"} ({hello?.deviceName ?? "?"}) session {sessionId}");
+
+            // Tell the new client whether the editor is currently in Play Mode.
+            var playModeJson = UnityEngine.JsonUtility.ToJson(
+                new PlayModeMessage { type = "playmode", playing = Application.isPlaying });
+            _wsServer?.SendToSession(sessionId, playModeJson);
         }
 
-        private void OnOrientationReceived(string sessionId, OrientationMessage msg)
+        private void OnPlayModeStateChanged(PlayModeStateChange change)
         {
-            if (msg == null) return;
-            Enqueue(() =>
-            {
-                if (_hostSessionId != null && sessionId != _hostSessionId) return;
-                LastOrientationWidth      = msg.width;
-                LastOrientationHeight     = msg.height;
-                LastOrientationDeviceName = _devices.Find(d => d.SessionId == sessionId)?.DeviceName ?? sessionId;
-                UniPeekConstants.Log($"[WS] Orientation {msg.width}x{msg.height} landscape={msg.landscape} device='{LastOrientationDeviceName}'");
-            });
+            // Fire only after the transition is complete so Application.isPlaying is correct.
+            if (change != PlayModeStateChange.EnteredPlayMode &&
+                change != PlayModeStateChange.EnteredEditMode) return;
+
+            BroadcastPlayMode();
+        }
+
+        private void BroadcastPlayMode()
+        {
+            var json = UnityEngine.JsonUtility.ToJson(
+                new PlayModeMessage { type = "playmode", playing = Application.isPlaying });
+            _wsServer?.BroadcastText(json);
         }
 
         private void HandleTouch(TouchMessage msg)

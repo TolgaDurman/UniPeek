@@ -17,9 +17,10 @@ namespace UniPeek
     public class ConfigMessage
     {
         public string type;
-        public string resolution;  // e.g. "1280x720"
+        public string resolution;  // e.g. "520x1131" — always in portrait order (short × long)
         public int    quality;     // 0–100
         public int    fps;         // frames per second cap
+        public bool   landscape;   // true when the device is in landscape orientation
     }
 
     /// <summary>Touch event from the phone.</summary>
@@ -54,9 +55,12 @@ namespace UniPeek
     public class HelloMessage
     {
         public string type;
-        public string client;      // "flutter" | "flutter_webrtc"
-        public string tier;        // "free" | "pro"
-        public string deviceName;  // human-readable device name, e.g. "John's iPhone 15 Pro"
+        public string client;       // "flutter" | "flutter_webrtc"
+        public string tier;         // "free" | "pro"
+        public string deviceName;   // human-readable device name, e.g. "John's iPhone 15 Pro"
+        public int    width;        // native screen width in pixels (0 if not provided)
+        public int    height;       // native screen height in pixels (0 if not provided)
+        public string orientation;  // "portrait" | "landscape" (empty if not provided)
     }
 
     /// <summary>WebRTC SDP answer from the phone (signaling).</summary>
@@ -85,14 +89,12 @@ namespace UniPeek
         public long   ts;   // Unix epoch milliseconds
     }
 
-    /// <summary>Orientation/resolution change from the phone.</summary>
+    /// <summary>Sent to clients when the Unity editor enters or exits Play Mode.</summary>
     [Serializable]
-    public class OrientationMessage
+    internal class PlayModeMessage
     {
-        public string type;
-        public bool   landscape;
-        public int    width;
-        public int    height;
+        public string type;    // always "playmode"
+        public bool   playing; // true = in Play Mode, false = Edit Mode
     }
 
     // ── WebSocket behaviour (one instance per connected client) ───────────────
@@ -190,9 +192,6 @@ namespace UniPeek
 
         /// <summary>Raised when a pong reply arrives. Args: timestamp that was echoed back.</summary>
         public event Action<long> PongReceived;
-
-        /// <summary>Raised when an orientation change is received. Args: (sessionId, msg).</summary>
-        public event Action<string, OrientationMessage> OrientationReceived;
 
         // ── Internal state ────────────────────────────────────────────────────
         private WebSocketSharp.Server.WebSocketServer _server;
@@ -349,11 +348,6 @@ namespace UniPeek
                     case "pong":
                         var pongMsg = UnityEngine.JsonUtility.FromJson<PingPongMessage>(json);
                         PongReceived?.Invoke(pongMsg.ts);
-                        break;
-
-                    case "orientation":
-                        OrientationReceived?.Invoke(sessionId,
-                            UnityEngine.JsonUtility.FromJson<OrientationMessage>(json));
                         break;
 
                     default:

@@ -1,10 +1,27 @@
 using System;
-using System.Collections;
 using UnityEditor;
 using UnityEngine;
+using UnityEngine.Rendering;
 
 namespace UniPeek
 {
+    /// <summary>Strategy used to capture each frame.</summary>
+    public enum CaptureMethod
+    {
+        /// <summary>
+        /// <c>Camera.Render()</c> to a <see cref="RenderTexture"/> then <c>ReadPixels</c>.
+        /// Works in both Play and Edit Mode. No Game View dependency.
+        /// </summary>
+        CameraRender,
+
+        /// <summary>
+        /// <c>Camera.Render()</c> to a <see cref="RenderTexture"/> then
+        /// <c>AsyncGPUReadback.Request()</c>. Non-blocking — no CPU stall — at the cost of
+        /// approximately one frame of additional latency. No Game View dependency.
+        /// </summary>
+        AsyncGPUReadback,
+    }
+
     /// <summary>
     /// Captures the composited Game View on the Unity main thread and forwards
     /// each frame to a <see cref="FrameEncoder"/> for off-thread JPEG encoding.
@@ -27,20 +44,16 @@ namespace UniPeek
     public sealed class FrameCapture
     {
         // ── Configuration ─────────────────────────────────────────────────────
-        private int   _targetWidth;
-        private int   _targetHeight;
-        private float _interval;    // seconds between captures = 1 / fpsCap
+        private int           _targetWidth;
+        private int           _targetHeight;
+        private float         _interval;    // seconds between captures = 1 / fpsCap
+        private CaptureMethod _method = CaptureMethod.CameraRender;
 
         // ── State ─────────────────────────────────────────────────────────────
         private bool   _active;
         private double _lastCaptureTime;
         private bool   _hooked;
-        private bool   _wasPlaying;
-        private bool   _captureInFlight;
-
-        // ── Play-mode coroutine helper ─────────────────────────────────────────
-        private GameObject    _helperGo;
-        private CaptureHelper _helper;
+        private bool   _asyncRequestInFlight;
 
         // ── Dependencies ──────────────────────────────────────────────────────
         private readonly FrameEncoder _encoder;
@@ -96,18 +109,14 @@ namespace UniPeek
         public void Start()
         {
             if (_active) return;
-            _active          = true;
-            _capturedFrames  = 0;
-            _droppedFrames   = 0;
-            _fpsWindowStart  = EditorApplication.timeSinceStartup;
-            _fpsWindowCount  = 0;
-            _smoothedFps     = 0f;
-            _lastCaptureTime = EditorApplication.timeSinceStartup - _interval;
-            _wasPlaying      = Application.isPlaying;
-            _captureInFlight = false;
-
-            if (_wasPlaying)
-                EnsureHelper();
+            _active               = true;
+            _capturedFrames       = 0;
+            _droppedFrames        = 0;
+            _fpsWindowStart       = EditorApplication.timeSinceStartup;
+            _fpsWindowCount       = 0;
+            _smoothedFps          = 0f;
+            _lastCaptureTime      = EditorApplication.timeSinceStartup - _interval;
+            _asyncRequestInFlight = false;
 
             if (!_hooked)
             {
@@ -125,7 +134,6 @@ namespace UniPeek
                 EditorApplication.update -= OnEditorUpdate;
                 _hooked = false;
             }
-            DestroyHelper();
         }
 
         /// <summary>Updates the streaming resolution. Takes effect on the next capture.</summary>
@@ -139,6 +147,14 @@ namespace UniPeek
         public void SetFpsCap(int fpsCap)
             => _interval = fpsCap > 0 ? 1f / fpsCap : 1f / 30f;
 
+        /// <summary>Switches the capture strategy. Takes effect on the next capture.</summary>
+        public void SetCaptureMethod(CaptureMethod method)
+        {
+            _method = method;
+            if (method != CaptureMethod.AsyncGPUReadback)
+                _asyncRequestInFlight = false;
+        }
+
         // ── Editor update ─────────────────────────────────────────────────────
 
         private void OnEditorUpdate()
@@ -148,68 +164,17 @@ namespace UniPeek
             // When WebRTC is active it drives its own video track — skip JPEG.
             if (_useWebRTC) return;
 
-            bool isPlaying = Application.isPlaying;
-
-            // Detect play/edit mode transitions and reset helper accordingly
-            if (isPlaying != _wasPlaying)
-            {
-                _wasPlaying      = isPlaying;
-                _captureInFlight = false;
-                if (!isPlaying)
-                    DestroyHelper();
-            }
-
             double now = EditorApplication.timeSinceStartup;
             if (now - _lastCaptureTime < _interval) return;
 
-            if (isPlaying)
-            {
-                // Play mode: request capture via coroutine (end-of-frame timing)
-                if (_captureInFlight || _encoder.IsEncoding) { _droppedFrames++; return; }
-                EnsureHelper();
-                _lastCaptureTime = now;
-                _captureInFlight = true;
-                _helper.RequestCapture();
-            }
+            _lastCaptureTime = now;
+            if (_method == CaptureMethod.AsyncGPUReadback)
+                CaptureFromCameraAsync();
             else
-            {
-                // Edit mode: render camera directly to RenderTexture
-                _lastCaptureTime = now;
                 CaptureFromCamera();
-            }
         }
 
-        // ── Play-mode: coroutine helper lifecycle ─────────────────────────────
-
-        private void EnsureHelper()
-        {
-            if (_helper != null) return;
-            _helperGo = new GameObject("[UniPeek] CaptureHelper")
-                { hideFlags = HideFlags.HideAndDontSave };
-            _helper = _helperGo.AddComponent<CaptureHelper>();
-            _helper.FrameReady += OnPlayModeFrame;
-        }
-
-        private void DestroyHelper()
-        {
-            if (_helperGo == null) return;
-            if (_helper != null) _helper.FrameReady -= OnPlayModeFrame;
-            // Destroy() is not valid in edit mode; use DestroyImmediate instead.
-            if (Application.isPlaying)
-                UnityEngine.Object.Destroy(_helperGo);
-            else
-                UnityEngine.Object.DestroyImmediate(_helperGo);
-            _helperGo = null;
-            _helper   = null;
-        }
-
-        private void OnPlayModeFrame(Texture2D captured)
-        {
-            _captureInFlight = false;
-            ProcessFrame(captured);
-        }
-
-        // ── Edit-mode: direct camera render ───────────────────────────────────
+        // ── Camera render ─────────────────────────────────────────────────────
 
         private void CaptureFromCamera()
         {
@@ -269,58 +234,73 @@ namespace UniPeek
             }
         }
 
-        // ── Shared: scale (if needed) and submit to encoder ───────────────────
+        // ── Camera → AsyncGPUReadback (non-blocking) ──────────────────────────
 
-        private void ProcessFrame(Texture2D captured)
+        private void CaptureFromCameraAsync()
         {
-            if (captured == null) { _droppedFrames++; return; }
+            if (_asyncRequestInFlight || _encoder.IsEncoding) { _droppedFrames++; return; }
 
-            if (_encoder.IsEncoding)
+            var cam = Camera.main;
+            if (cam == null)
             {
-                UnityEngine.Object.DestroyImmediate(captured);
-                _droppedFrames++;
-                return;
+                var all = Camera.allCameras;
+                cam = all.Length > 0 ? all[0] : null;
             }
+            if (cam == null) { _droppedFrames++; return; }
 
-            Texture2D     toEncode = null;
-            RenderTexture rt       = null;
+            RenderTexture rt        = null;
+            var           prevTarget = cam.targetTexture;
 
             try
             {
-                // Blit to an sRGB RT to scale to the target resolution.
-                // In a Linear project, ReadPixels from an sRGB RT converts the data back to
-                // linear space. Marking the texture as linear=true tells EncodeToJPG to apply
-                // the sRGB gamma curve exactly once, matching what the Game View displays.
                 rt = RenderTexture.GetTemporary(
-                    _targetWidth, _targetHeight, 0,
+                    _targetWidth, _targetHeight, 24,
                     RenderTextureFormat.ARGB32, RenderTextureReadWrite.sRGB);
-                Graphics.Blit(captured, rt);
 
-                bool linearProject = PlayerSettings.colorSpace == ColorSpace.Linear;
-                var prev = RenderTexture.active;
-                RenderTexture.active = rt;
-                toEncode = new Texture2D(_targetWidth, _targetHeight, TextureFormat.RGB24, false, linearProject);
-                toEncode.ReadPixels(new Rect(0, 0, _targetWidth, _targetHeight), 0, 0);
-                toEncode.Apply();
-                RenderTexture.active = prev;
-
-                UnityEngine.Object.DestroyImmediate(captured);
-                captured = null;
-
-                bool accepted = _encoder.SubmitFrame(toEncode);
-                if (accepted) { toEncode = null; _capturedFrames++; UpdateFpsStats(); }
-                else _droppedFrames++;
+                cam.targetTexture = rt;
+                cam.Render();
+                cam.targetTexture = prevTarget;
             }
             catch (Exception ex)
             {
-                UniPeekConstants.LogWarning($"[Capture] Frame processing failed: {ex.Message}");
+                cam.targetTexture = prevTarget;
+                if (rt != null) RenderTexture.ReleaseTemporary(rt);
+                UniPeekConstants.LogWarning($"[Capture] AsyncGPU camera render failed: {ex.Message}");
+                return;
             }
-            finally
+
+            bool linearProject = PlayerSettings.colorSpace == ColorSpace.Linear;
+            _asyncRequestInFlight = true;
+
+            // Request non-blocking GPU→CPU readback. Callback fires on main thread.
+            AsyncGPUReadback.Request(rt, 0, TextureFormat.RGB24, req =>
             {
-                if (rt      != null) RenderTexture.ReleaseTemporary(rt);
-                if (captured!= null) UnityEngine.Object.DestroyImmediate(captured);
-                if (toEncode!= null) UnityEngine.Object.DestroyImmediate(toEncode);
-            }
+                RenderTexture.ReleaseTemporary(rt);
+                _asyncRequestInFlight = false;
+
+                if (req.hasError) { _droppedFrames++; return; }
+                if (_encoder.IsEncoding) { _droppedFrames++; return; }
+
+                Texture2D tex = null;
+                try
+                {
+                    tex = new Texture2D(_targetWidth, _targetHeight, TextureFormat.RGB24, false, linearProject);
+                    tex.LoadRawTextureData(req.GetData<byte>());
+                    tex.Apply();
+
+                    bool accepted = _encoder.SubmitFrame(tex);
+                    if (accepted) { tex = null; _capturedFrames++; UpdateFpsStats(); }
+                    else _droppedFrames++;
+                }
+                catch (Exception ex)
+                {
+                    UniPeekConstants.LogWarning($"[Capture] AsyncGPU readback processing failed: {ex.Message}");
+                }
+                finally
+                {
+                    if (tex != null) UnityEngine.Object.DestroyImmediate(tex);
+                }
+            });
         }
 
         // ── Stats ─────────────────────────────────────────────────────────────
@@ -335,36 +315,6 @@ namespace UniPeek
                 _fpsWindowCount = 0;
                 _fpsWindowStart = EditorApplication.timeSinceStartup;
             }
-        }
-    }
-
-    // ── Play-mode coroutine capture helper ────────────────────────────────────
-
-    /// <summary>
-    /// Lightweight MonoBehaviour that runs a <c>WaitForEndOfFrame</c> coroutine
-    /// so <c>ScreenCapture.CaptureScreenshotAsTexture</c> is called at the correct
-    /// point in the player loop (after all cameras and UI have rendered).
-    /// </summary>
-    internal sealed class CaptureHelper : MonoBehaviour
-    {
-        internal event Action<Texture2D> FrameReady;
-        private bool _busy;
-
-        internal void RequestCapture()
-        {
-            if (_busy) return;
-            _busy = true;
-            StartCoroutine(CaptureCoroutine());
-        }
-
-        private IEnumerator CaptureCoroutine()
-        {
-            yield return new WaitForEndOfFrame();
-            Texture2D tex = null;
-            try { tex = ScreenCapture.CaptureScreenshotAsTexture(); }
-            catch { /* returns null; caller handles gracefully */ }
-            _busy = false;
-            FrameReady?.Invoke(tex);
         }
     }
 }
