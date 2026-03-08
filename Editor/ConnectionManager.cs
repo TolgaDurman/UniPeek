@@ -3,7 +3,6 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Net;
 using System.Net.Sockets;
-using System.Reflection;
 using UnityEditor;
 using UnityEngine;
 
@@ -311,75 +310,15 @@ namespace UniPeek
         }
 
         /// <summary>
-        /// Sets the Unity Game View to a custom fixed resolution via internal Unity APIs.
-        /// Silently ignores failures (the reflection target may change across Unity versions).
+        /// Sets the Unity Game View to a custom fixed resolution using
+        /// <see cref="UnityEditor.TestTools.Graphics.GameViewSize"/>.
         /// </summary>
         private static void TrySetGameViewResolution(int width, int height)
         {
             try
             {
-                var sizesType = Type.GetType("UnityEditor.GameViewSizes,UnityEditor");
-                if (sizesType == null) return;
-
-                var instanceProp = sizesType.GetProperty("instance", BindingFlags.Static | BindingFlags.Public);
-                var instance = instanceProp?.GetValue(null);
-                if (instance == null) return;
-
-                // currentGroupType reflects the active build target (Standalone, Android, …)
-                var currentGroupType = instance.GetType()
-                    .GetProperty("currentGroupType", BindingFlags.Instance | BindingFlags.Public)
-                    ?.GetValue(instance);
-
-                var group = sizesType.GetMethod("GetGroup")
-                    ?.Invoke(instance, new[] { currentGroupType });
-                if (group == null) return;
-
-                var groupType    = group.GetType();
-                int builtinCount = (int)(groupType.GetMethod("GetBuiltinCount")?.Invoke(group, null) ?? 0);
-                int totalCount   = (int)(groupType.GetMethod("GetTotalCount")?.Invoke(group, null) ?? 0);
-                var getSize      = groupType.GetMethod("GetGameViewSize");
-
-                // Check for an existing custom size that matches.
-                int idx = -1;
-                for (int i = builtinCount; i < totalCount; i++)
-                {
-                    var sz     = getSize?.Invoke(group, new object[] { i });
-                    var szType = sz?.GetType();
-                    int w = (int)(szType?.GetProperty("width") ?.GetValue(sz) ?? 0);
-                    int h = (int)(szType?.GetProperty("height")?.GetValue(sz) ?? 0);
-                    if (w == width && h == height) { idx = i; break; }
-                }
-
-                // Add a new custom size if none matched.
-                if (idx < 0)
-                {
-                    var sizeType     = Type.GetType("UnityEditor.GameViewSize,UnityEditor");
-                    var sizeEnumType = Type.GetType("UnityEditor.GameViewSizeType,UnityEditor");
-                    if (sizeType == null || sizeEnumType == null) return;
-
-                    var fixedRes = Enum.Parse(sizeEnumType, "FixedResolution");
-                    var ctor = sizeType.GetConstructor(
-                        new[] { sizeEnumType, typeof(int), typeof(int), typeof(string) });
-                    if (ctor == null) return;
-
-                    var newSize = ctor.Invoke(new[] { fixedRes, (object)width, height, $"UniPeek {width}×{height}" });
-                    groupType.GetMethod("AddCustomSize")?.Invoke(group, new object[] { newSize });
-                    idx = totalCount; // appended at end
-                }
-
-                // Select it on whichever Game View window is open.
-                var gameViewType = Type.GetType("UnityEditor.GameView,UnityEditor");
-                if (gameViewType == null) return;
-
-                var windows = Resources.FindObjectsOfTypeAll(gameViewType);
-                if (windows == null || windows.Length == 0) return;
-
-                var sizeSelCallback = gameViewType.GetMethod(
-                    "SizeSelectionCallback",
-                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-
-                foreach (var w in windows)
-                    sizeSelCallback?.Invoke(w, new object[] { idx, null });
+                var sizeObj = GameViewSize.SetCustomSize(width, height);
+                GameViewSize.SelectSize(sizeObj);
             }
             catch (Exception ex)
             {
