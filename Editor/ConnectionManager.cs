@@ -113,6 +113,9 @@ namespace UniPeek
         // First session to send a valid hello becomes host; only it can send config/input.
         private string _hostSessionId;
 
+        // Suppress repeated "not in Play Mode" warnings for touch input.
+        private bool _gameViewFocusWarningLogged;
+
         private bool  _editorHooked;
         private float _statsTimer;
 
@@ -562,6 +565,19 @@ namespace UniPeek
         private void HandleTouch(TouchMessage msg)
         {
             if (msg == null) return;
+
+            // Keep the Game View focused so the Input System processes injected events.
+            if (Application.isPlaying)
+            {
+                _gameViewFocusWarningLogged = false; // reset when we enter Play Mode
+                GameViewSize.GetMainGameView()?.Focus();
+            }
+            else if (!_gameViewFocusWarningLogged)
+            {
+                _gameViewFocusWarningLogged = true;
+                UniPeekConstants.LogWarning("[Input] Touch received but the Editor is not in Play Mode — Input System events will not be processed. Enter Play Mode or click the Game View to enable input.");
+            }
+
             UniPeekConstants.Log($"[Input] Touch phase={msg.phase} x={msg.x:F3} y={msg.y:F3} finger={msg.fingerId}");
             InputInjector.InjectTouch(msg.phase, msg.x, msg.y, msg.fingerId);
             var pos = new Vector2(msg.x, msg.y);

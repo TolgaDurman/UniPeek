@@ -15,7 +15,7 @@ namespace UniPeek
 
         // ── Helpers ───────────────────────────────────────────────────────────
 
-        static EditorWindow GetMainGameView()
+        internal static EditorWindow GetMainGameView()
         {
             var m = s_PlayModeViewType?
                 .GetMethod("GetMainPlayModeView", BindingFlags.NonPublic | BindingFlags.Static);
