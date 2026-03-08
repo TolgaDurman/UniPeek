@@ -219,6 +219,11 @@ namespace UniPeek
             if (State == ConnectionState.Disconnected) return;
 
 #if UNITY_WEBRTC
+            // Send shutdown to the WebRTC client BEFORE closing the peer connection,
+            // so Flutter transitions to ConnectionState.shutdown (clean exit, no reconnect
+            // prompt) rather than ConnectionState.disconnected (reconnect countdown).
+            if (_webRtcSessionId != null)
+                _wsServer?.SendToSession(_webRtcSessionId, "{\"type\":\"shutdown\"}");
             TearDownWebRTC();
 #endif
 
@@ -298,6 +303,8 @@ namespace UniPeek
         /// </summary>
         public void ApplyConfig(int width, int height, int quality, int fpsCap)
         {
+            bool resolutionChanged = width != Config.Width || height != Config.Height;
+
             Config.Width   = width;
             Config.Height  = height;
             Config.Quality = quality;
@@ -310,6 +317,17 @@ namespace UniPeek
             // Resize the Game View so ScreenCapture captures at the phone's exact
             // resolution — avoids stretching when aspect ratios differ.
             TrySetGameViewResolution(width, height);
+
+#if UNITY_WEBRTC
+            // The WebRTC RenderTexture is fixed-size — restart the session with the
+            // new dimensions so the video track matches the phone's resolution.
+            if (resolutionChanged && _webRtcStreamer != null && _webRtcSessionId != null)
+            {
+                var sessionId = _webRtcSessionId;
+                TearDownWebRTC();
+                StartWebRTCNegotiation(sessionId);
+            }
+#endif
         }
 
         /// <summary>
@@ -534,8 +552,14 @@ namespace UniPeek
 #if UNITY_WEBRTC
             if (hello?.client == "flutter_webrtc")
             {
-                // Application.isPlaying must be read on the main thread.
-                Enqueue(() => { if (Application.isPlaying) StartWebRTCNegotiation(sessionId); });
+                // EditorPrefs and StartWebRTCNegotiation both require the main thread.
+                Enqueue(() =>
+                {
+                    if (EditorPrefs.GetBool(UniPeekConstants.PrefWebRtcEnabled, true))
+                        StartWebRTCNegotiation(sessionId);
+                    else
+                        _wsServer?.CloseSession(sessionId);
+                });
                 return;
             }
 #endif

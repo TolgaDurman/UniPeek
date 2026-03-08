@@ -10,6 +10,7 @@ namespace UniPeek
     {
         // ── Persistent settings ───────────────────────────────────────────────
         private bool _requirePlayMode;
+        private bool _useWebRtc;
 
         // Survives domain reloads; claimed with DeleteKey to prevent double-start.
         private const string PrefPendingStart = "UniPeek_PendingStart";
@@ -348,6 +349,24 @@ namespace UniPeek
             }
 
             GUILayout.Space(4f);
+#if UNITY_WEBRTC
+            EditorGUI.BeginChangeCheck();
+            using (new EditorGUILayout.HorizontalScope())
+            {
+                GUILayout.Space(2f);
+                _useWebRtc = EditorGUILayout.ToggleLeft("Use WebRTC (low-latency video)", _useWebRtc);
+            }
+            if (EditorGUI.EndChangeCheck())
+                SavePrefs();
+
+            if (!_useWebRtc)
+            {
+                EditorGUILayout.HelpBox(
+                    "WebRTC disabled — the phone will use JPEG streaming over WebSocket.",
+                    MessageType.None);
+            }
+            GUILayout.Space(4f);
+#endif
             var mgr = ConnectionManager.Instance;
             EditorGUI.BeginChangeCheck();
             var newMethod = (CaptureMethod)EditorGUILayout.EnumPopup("Capture Method", mgr.ActiveCaptureMethod);
@@ -612,6 +631,7 @@ namespace UniPeek
         private void LoadPrefs()
         {
             _requirePlayMode = EditorPrefs.GetBool(UniPeekConstants.PrefAutoStopPlay, true);
+            _useWebRtc       = EditorPrefs.GetBool(UniPeekConstants.PrefWebRtcEnabled, true);
 
             // File takes priority — it's written synchronously so it's crash-safe.
             if (System.IO.File.Exists(EditorNameFilePath))
@@ -623,6 +643,7 @@ namespace UniPeek
         private void SavePrefs()
         {
             EditorPrefs.SetBool(UniPeekConstants.PrefAutoStopPlay, _requirePlayMode);
+            EditorPrefs.SetBool(UniPeekConstants.PrefWebRtcEnabled, _useWebRtc);
             EditorPrefs.SetString(UniPeekConstants.PrefEditorName, _editorName);
 
             // Also write to file for crash resilience.

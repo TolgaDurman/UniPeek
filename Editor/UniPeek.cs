@@ -55,6 +55,9 @@ namespace UniPeek
         /// </summary>
         public const string PrefPersistStreaming = "UniPeek_PersistStreaming";
 
+        /// <summary>EditorPrefs key for the WebRTC streaming toggle (defaults to true when the package is present).</summary>
+        public const string PrefWebRtcEnabled = "UniPeek_WebRtcEnabled";
+
         // ── Logging helpers ──────────────────────────────────────────────────
         /// <summary>Writes an info-level message tagged with [UniPeek].</summary>
         public static void Log(string message) => Debug.Log($"[UniPeek] {message}");

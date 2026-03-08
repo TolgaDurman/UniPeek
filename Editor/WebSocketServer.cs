@@ -257,6 +257,18 @@ namespace UniPeek
             }
         }
 
+        /// <summary>Forcibly closes a specific client session.</summary>
+        public void CloseSession(string sessionId)
+        {
+            if (!_running || string.IsNullOrEmpty(sessionId)) return;
+            try
+            {
+                _server?.WebSocketServices["/"]?.Sessions
+                    ?.CloseSession(sessionId, WebSocketSharp.CloseStatusCode.Normal, "use_jpeg");
+            }
+            catch { }
+        }
+
         /// <summary>Returns the number of currently connected clients.</summary>
         public int ConnectedCount =>
             _server?.WebSocketServices["/"]?.Sessions?.Count ?? 0;

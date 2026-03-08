@@ -57,7 +57,14 @@ namespace UniPeek
         private RTCDataChannel    _dataChannel;
 
         private bool _disposed;
-        private EditorCoroutine _updateCoroutine;
+
+        // Capture camera — hidden secondary camera used in Edit Mode
+        private RenderTexture _renderTexture;
+        private Camera        _captureCamera;
+        private GameObject    _cameraGo;
+
+        // Play Mode overlay capture (same CaptureHelper as JPEG pipeline)
+        private CaptureHelper _captureHelper;
 
         // ── Constructor ───────────────────────────────────────────────────────
 
@@ -94,22 +101,34 @@ namespace UniPeek
             _pc.OnConnectionStateChange = OnConnectionStateChange;
             _pc.OnDataChannel           = OnRemoteDataChannel;
 
-            // ── Video track ───────────────────────────────────────────────────
-            var cam = Camera.main;
-            if (cam == null && Camera.allCameras.Length > 0)
-                cam = Camera.allCameras[0];
+            // ── Video track via hidden secondary camera ────────────────────────
+            // Using Camera.CaptureStreamTrack redirects camera.targetTexture and
+            // breaks the Game View. Instead, create a hidden camera that renders
+            // into our own RenderTexture without touching Camera.main.
+            var mainCam = Camera.main;
+            if (mainCam == null && Camera.allCameras.Length > 0)
+                mainCam = Camera.allCameras[0];
 
-            if (cam != null)
+            _renderTexture = new RenderTexture(_width, _height, 24, RenderTextureFormat.BGRA32);
+            _renderTexture.Create();
+            _videoTrack  = new VideoStreamTrack(_renderTexture);
+            _mediaStream = new MediaStream();
+            _mediaStream.AddTrack(_videoTrack);
+            _pc.AddTrack(_videoTrack, _mediaStream);
+
+            if (mainCam != null)
             {
-                _videoTrack  = cam.CaptureStreamTrack(_width, _height);
-                _mediaStream = new MediaStream();
-                _mediaStream.AddTrack(_videoTrack);
-                _pc.AddTrack(_videoTrack, _mediaStream);
-                UniPeekConstants.Log($"[WebRTC] Video track attached from camera '{cam.name}'.");
+                _cameraGo = new GameObject("UniPeekWebRTCCapture")
+                    { hideFlags = HideFlags.HideAndDontSave };
+                _captureCamera = _cameraGo.AddComponent<Camera>();
+                _captureCamera.CopyFrom(mainCam);
+                _captureCamera.targetTexture = _renderTexture;
+                _captureCamera.enabled = false; // driven manually in UpdateLoop
+                UniPeekConstants.Log($"[WebRTC] Capture camera created from '{mainCam.name}'.");
             }
             else
             {
-                UniPeekConstants.LogWarning("[WebRTC] No camera found — streaming without video track.");
+                UniPeekConstants.LogWarning("[WebRTC] No camera found — video track will be blank.");
             }
 
             // ── Data channel (input messages from Flutter) ────────────────────
@@ -120,7 +139,8 @@ namespace UniPeek
 
             // ── Start offer creation and drive WebRTC update loop ─────────────
             EditorCoroutineUtility.StartCoroutineOwnerless(CreateOfferCoroutine());
-            _updateCoroutine = EditorCoroutineUtility.StartCoroutineOwnerless(UpdateLoop());
+            EditorCoroutineUtility.StartCoroutineOwnerless(WebRtcUpdateWrapper());
+            EditorCoroutineUtility.StartCoroutineOwnerless(CameraLoop());
         }
 
         /// <summary>
@@ -173,10 +193,30 @@ namespace UniPeek
             _pc?.Dispose();
             _pc = null;
 
-            if (_updateCoroutine != null)
+            // Both coroutines (WebRtcUpdateWrapper, CameraLoop) check _disposed
+            // (set to true above) and exit naturally on the next tick.
+            // Do NOT use StopCoroutine — it sets m_Routine=null which causes a
+            // NullReferenceException if MoveNext is still in the current frame's
+            // EditorApplication.update snapshot.
+
+            if (_captureHelper != null)
             {
-                EditorCoroutineUtility.StopCoroutine(_updateCoroutine);
-                _updateCoroutine = null;
+                UnityEngine.Object.DestroyImmediate(_captureHelper.gameObject);
+                _captureHelper = null;
+            }
+
+            if (_cameraGo != null)
+            {
+                UnityEngine.Object.DestroyImmediate(_cameraGo);
+                _cameraGo      = null;
+                _captureCamera = null;
+            }
+
+            if (_renderTexture != null)
+            {
+                _renderTexture.Release();
+                UnityEngine.Object.DestroyImmediate(_renderTexture);
+                _renderTexture = null;
             }
 
             UniPeekConstants.Log("[WebRTC] Streamer disposed.");
@@ -184,10 +224,88 @@ namespace UniPeek
 
         // ── Coroutines ────────────────────────────────────────────────────────
 
-        private IEnumerator UpdateLoop()
+        // Drives WebRTC.Update() one step per editor tick. Using a wrapper instead
+        // of running WebRTC.Update() directly as an EditorCoroutine lets us exit via
+        // the _disposed flag without calling StopCoroutine (which causes a
+        // NullReferenceException in EditorCoroutines when stopped mid-frame).
+        private IEnumerator WebRtcUpdateWrapper()
+        {
+            var updater = WebRTC.Update();
+            while (!_disposed)
+            {
+                updater.MoveNext();
+                yield return null;
+            }
+        }
+
+        // In Play Mode: schedules a full-screen capture (including Overlay canvases)
+        // via CaptureHelper, then blits the result into _renderTexture each frame.
+        // In Edit Mode: renders the secondary camera directly (no overlay UI support).
+        private IEnumerator CameraLoop()
         {
             while (!_disposed)
-                yield return WebRTC.Update();
+            {
+                if (Application.isPlaying)
+                {
+                    if (_captureHelper == null)
+                    {
+                        var go = new GameObject("[UniPeek] WebRTCCapture")
+                            { hideFlags = HideFlags.HideAndDontSave };
+                        _captureHelper           = go.AddComponent<CaptureHelper>();
+                        _captureHelper.OnFrame   = OnCaptureFrame;
+                    }
+                    _captureHelper.RequestCapture();
+                }
+                else
+                {
+                    if (_captureHelper != null)
+                    {
+                        UnityEngine.Object.DestroyImmediate(_captureHelper.gameObject);
+                        _captureHelper = null;
+                    }
+
+                    // Recreate the secondary camera if it was destroyed (e.g. the
+                    // capture camera was created during Play Mode and Unity destroyed
+                    // all Play Mode objects when exiting Play Mode).
+                    if (_captureCamera == null)
+                    {
+                        var mainCam = Camera.main;
+                        if (mainCam == null && Camera.allCameras.Length > 0)
+                            mainCam = Camera.allCameras[0];
+
+                        if (mainCam != null)
+                        {
+                            if (_cameraGo != null)
+                                UnityEngine.Object.DestroyImmediate(_cameraGo);
+
+                            _cameraGo = new GameObject("UniPeekWebRTCCapture")
+                                { hideFlags = HideFlags.HideAndDontSave };
+                            _captureCamera = _cameraGo.AddComponent<Camera>();
+                            _captureCamera.CopyFrom(mainCam);
+                            _captureCamera.targetTexture = _renderTexture;
+                            _captureCamera.enabled = false;
+                            UniPeekConstants.Log("[WebRTC] Capture camera recreated after Play Mode exit.");
+                        }
+                    }
+
+                    if (_captureCamera != null)
+                    {
+                        var main = Camera.main;
+                        if (main != null)
+                            _captureCamera.transform.SetPositionAndRotation(
+                                main.transform.position, main.transform.rotation);
+                        _captureCamera.Render();
+                    }
+                }
+                yield return null;
+            }
+        }
+
+        private void OnCaptureFrame(Texture2D tex)
+        {
+            if (_renderTexture != null)
+                Graphics.Blit(tex, _renderTexture);
+            UnityEngine.Object.DestroyImmediate(tex);
         }
 
         private IEnumerator CreateOfferCoroutine()
@@ -245,6 +363,7 @@ namespace UniPeek
             {
                 case RTCIceConnectionState.Connected:
                 case RTCIceConnectionState.Completed:
+                    ApplyBitrateSettings();
                     Connected?.Invoke();
                     break;
 
@@ -254,6 +373,23 @@ namespace UniPeek
                     Disconnected?.Invoke();
                     break;
             }
+        }
+
+        // Raise the video sender's bitrate cap so the stream quality is not
+        // limited by WebRTC's conservative default (~600 kbps).
+        // 10 Mbps max allows HD streaming over a local Wi-Fi link.
+        private void ApplyBitrateSettings()
+        {
+            if (_pc == null) return;
+            foreach (var sender in _pc.GetSenders())
+            {
+                var parameters = sender.GetParameters();
+                if (parameters.encodings == null) continue;
+                foreach (var enc in parameters.encodings)
+                    enc.maxBitrate = 10_000_000; // 10 Mbps
+                sender.SetParameters(parameters);
+            }
+            UniPeekConstants.Log("[WebRTC] Bitrate cap set to 10 Mbps.");
         }
 
         private void OnConnectionStateChange(RTCPeerConnectionState state)
