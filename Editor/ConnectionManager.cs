@@ -3,6 +3,7 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Net;
 using System.Net.Sockets;
+using System.Reflection;
 using UnityEditor;
 using UnityEngine;
 
@@ -303,6 +304,87 @@ namespace UniPeek
             _capture?.SetResolution(width, height);
             _capture?.SetFpsCap(fpsCap);
             _encoder?.SetQuality(quality);
+
+            // Resize the Game View so ScreenCapture captures at the phone's exact
+            // resolution — avoids stretching when aspect ratios differ.
+            TrySetGameViewResolution(width, height);
+        }
+
+        /// <summary>
+        /// Sets the Unity Game View to a custom fixed resolution via internal Unity APIs.
+        /// Silently ignores failures (the reflection target may change across Unity versions).
+        /// </summary>
+        private static void TrySetGameViewResolution(int width, int height)
+        {
+            try
+            {
+                var sizesType = Type.GetType("UnityEditor.GameViewSizes,UnityEditor");
+                if (sizesType == null) return;
+
+                var instanceProp = sizesType.GetProperty("instance", BindingFlags.Static | BindingFlags.Public);
+                var instance = instanceProp?.GetValue(null);
+                if (instance == null) return;
+
+                // currentGroupType reflects the active build target (Standalone, Android, …)
+                var currentGroupType = instance.GetType()
+                    .GetProperty("currentGroupType", BindingFlags.Instance | BindingFlags.Public)
+                    ?.GetValue(instance);
+
+                var group = sizesType.GetMethod("GetGroup")
+                    ?.Invoke(instance, new[] { currentGroupType });
+                if (group == null) return;
+
+                var groupType    = group.GetType();
+                int builtinCount = (int)(groupType.GetMethod("GetBuiltinCount")?.Invoke(group, null) ?? 0);
+                int totalCount   = (int)(groupType.GetMethod("GetTotalCount")?.Invoke(group, null) ?? 0);
+                var getSize      = groupType.GetMethod("GetGameViewSize");
+
+                // Check for an existing custom size that matches.
+                int idx = -1;
+                for (int i = builtinCount; i < totalCount; i++)
+                {
+                    var sz     = getSize?.Invoke(group, new object[] { i });
+                    var szType = sz?.GetType();
+                    int w = (int)(szType?.GetProperty("width") ?.GetValue(sz) ?? 0);
+                    int h = (int)(szType?.GetProperty("height")?.GetValue(sz) ?? 0);
+                    if (w == width && h == height) { idx = i; break; }
+                }
+
+                // Add a new custom size if none matched.
+                if (idx < 0)
+                {
+                    var sizeType     = Type.GetType("UnityEditor.GameViewSize,UnityEditor");
+                    var sizeEnumType = Type.GetType("UnityEditor.GameViewSizeType,UnityEditor");
+                    if (sizeType == null || sizeEnumType == null) return;
+
+                    var fixedRes = Enum.Parse(sizeEnumType, "FixedResolution");
+                    var ctor = sizeType.GetConstructor(
+                        new[] { sizeEnumType, typeof(int), typeof(int), typeof(string) });
+                    if (ctor == null) return;
+
+                    var newSize = ctor.Invoke(new[] { fixedRes, (object)width, height, $"UniPeek {width}×{height}" });
+                    groupType.GetMethod("AddCustomSize")?.Invoke(group, new object[] { newSize });
+                    idx = totalCount; // appended at end
+                }
+
+                // Select it on whichever Game View window is open.
+                var gameViewType = Type.GetType("UnityEditor.GameView,UnityEditor");
+                if (gameViewType == null) return;
+
+                var windows = Resources.FindObjectsOfTypeAll(gameViewType);
+                if (windows == null || windows.Length == 0) return;
+
+                var sizeSelCallback = gameViewType.GetMethod(
+                    "SizeSelectionCallback",
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+
+                foreach (var w in windows)
+                    sizeSelCallback?.Invoke(w, new object[] { idx, null });
+            }
+            catch (Exception ex)
+            {
+                UniPeekConstants.LogWarning($"[Config] Could not resize Game View: {ex.Message}");
+            }
         }
 
         // ── Editor update hook ────────────────────────────────────────────────
@@ -434,12 +516,8 @@ namespace UniPeek
         private void OnConfigReceived(string sessionId, ConfigMessage msg)
         {
             if (msg == null) return;
-            if (sessionId != _hostSessionId)
-            {
-                UniPeekConstants.LogWarning($"[Auth] Config rejected from non-host session {sessionId}");
-                return;
-            }
 
+            // Parse on the background thread (no Unity API access needed here).
             int width  = Config.Width;
             int height = Config.Height;
             if (!string.IsNullOrEmpty(msg.resolution))
@@ -462,7 +540,18 @@ namespace UniPeek
             int quality = msg.quality > 0 ? Mathf.Clamp(msg.quality, 1, 100) : Config.Quality;
             int fps     = msg.fps     > 0 ? Mathf.Clamp(msg.fps, 1, 120)     : Config.FpsCap;
 
-            Enqueue(() => ApplyConfig(width, height, quality, fps));
+            // Host check MUST run on the main thread after OnHelloReceived has been
+            // processed — doing it here (BG thread) races against the hello Enqueue
+            // and always sees _hostSessionId == null on the first config message.
+            Enqueue(() =>
+            {
+                if (sessionId != _hostSessionId)
+                {
+                    UniPeekConstants.LogWarning($"[Auth] Config rejected from non-host session {sessionId}");
+                    return;
+                }
+                ApplyConfig(width, height, quality, fps);
+            });
         }
 
         private void OnHelloReceived(string sessionId, HelloMessage hello)

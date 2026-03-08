@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using UnityEditor;
 using UnityEngine;
 using UnityEngine.Rendering;
@@ -57,6 +58,9 @@ namespace UniPeek
 
         // ── Dependencies ──────────────────────────────────────────────────────
         private readonly FrameEncoder _encoder;
+
+        // ── Play-mode overlay capture ─────────────────────────────────────────
+        private CaptureHelper _helper;
 
         // ── WebRTC bypass ─────────────────────────────────────────────────────
         private bool _useWebRTC;
@@ -124,6 +128,7 @@ namespace UniPeek
                 EditorApplication.update -= OnEditorUpdate;
                 _hooked = false;
             }
+            DestroyHelper();
         }
 
         /// <summary>Updates the streaming resolution. Takes effect on the next capture.</summary>
@@ -154,17 +159,109 @@ namespace UniPeek
             // When WebRTC is active it drives its own video track — skip JPEG.
             if (_useWebRTC) return;
 
+            // Sync helper lifetime with Play mode.
+            if (Application.isPlaying)
+                EnsureHelper();
+            else if (_helper != null)
+                DestroyHelper();
+
             double now = EditorApplication.timeSinceStartup;
             if (now - _lastCaptureTime < _interval) return;
 
             _lastCaptureTime = now;
-            if (_method == CaptureMethod.AsyncGPUReadback)
+
+            if (Application.isPlaying)
+            {
+                // ScreenCapture runs after WaitForEndOfFrame, so it includes
+                // Screen Space Overlay canvases and all post-processing.
+                if (_helper != null) _helper.RequestCapture();
+            }
+            else if (_method == CaptureMethod.AsyncGPUReadback)
+            {
                 CaptureFromCameraAsync();
+            }
             else
+            {
                 CaptureFromCamera();
+            }
         }
 
-        // ── Camera render ─────────────────────────────────────────────────────
+        // ── Play-mode helper management ───────────────────────────────────────
+
+        private void EnsureHelper()
+        {
+            if (_helper != null) return;
+            var go = new GameObject("[UniPeek] CaptureHelper") { hideFlags = HideFlags.HideAndDontSave };
+            _helper          = go.AddComponent<CaptureHelper>();
+            _helper.OnFrame  = OnHelperFrame;
+        }
+
+        private void DestroyHelper()
+        {
+            if (_helper == null) return;
+            if (_helper.gameObject != null)
+                UnityEngine.Object.DestroyImmediate(_helper.gameObject);
+            _helper = null;
+        }
+
+        /// <summary>
+        /// Callback from <see cref="CaptureHelper"/> — runs on the main thread immediately
+        /// after <c>WaitForEndOfFrame</c> with the full composited screen texture.
+        /// </summary>
+        private void OnHelperFrame(Texture2D screenTex)
+        {
+            if (!_active || _encoder.IsEncoding)
+            {
+                UnityEngine.Object.DestroyImmediate(screenTex);
+                return;
+            }
+
+            Texture2D toEncode  = null;
+            Texture2D toDestroy = null; // screenTex reference kept for cleanup
+
+            try
+            {
+                bool needsScale = screenTex.width != _targetWidth || screenTex.height != _targetHeight;
+
+                if (needsScale)
+                {
+                    var rt = RenderTexture.GetTemporary(
+                        _targetWidth, _targetHeight, 0,
+                        RenderTextureFormat.ARGB32, RenderTextureReadWrite.sRGB);
+                    Graphics.Blit(screenTex, rt);
+
+                    toDestroy = screenTex; // will be cleaned up in finally
+
+                    var prevActive = RenderTexture.active;
+                    RenderTexture.active = rt;
+                    toEncode = new Texture2D(_targetWidth, _targetHeight, TextureFormat.RGB24, false,
+                        PlayerSettings.colorSpace == ColorSpace.Linear);
+                    toEncode.ReadPixels(new Rect(0, 0, _targetWidth, _targetHeight), 0, 0);
+                    toEncode.Apply();
+                    RenderTexture.active = prevActive;
+                    RenderTexture.ReleaseTemporary(rt);
+                }
+                else
+                {
+                    // Hand the texture directly to the encoder; no extra copy needed.
+                    toEncode  = screenTex;
+                    toDestroy = null;
+                }
+
+                if (_encoder.SubmitFrame(toEncode)) { toEncode = null; UpdateFpsStats(); }
+            }
+            catch (Exception ex)
+            {
+                UniPeekConstants.LogWarning($"[Capture] Screen capture processing failed: {ex.Message}");
+            }
+            finally
+            {
+                if (toDestroy != null) UnityEngine.Object.DestroyImmediate(toDestroy);
+                if (toEncode  != null) UnityEngine.Object.DestroyImmediate(toEncode);
+            }
+        }
+
+        // ── Camera render (Edit mode) ─────────────────────────────────────────
 
         private void CaptureFromCamera()
         {
@@ -222,7 +319,7 @@ namespace UniPeek
             }
         }
 
-        // ── Camera → AsyncGPUReadback (non-blocking) ──────────────────────────
+        // ── Camera → AsyncGPUReadback (Edit mode, non-blocking) ───────────────
 
         private void CaptureFromCameraAsync()
         {
@@ -300,6 +397,47 @@ namespace UniPeek
                 _smoothedFps    = (float)(_fpsWindowCount / elapsed);
                 _fpsWindowCount = 0;
                 _fpsWindowStart = EditorApplication.timeSinceStartup;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Hidden MonoBehaviour that drives Play-mode overlay capture via
+    /// <c>WaitForEndOfFrame</c> + <c>ScreenCapture.CaptureScreenshotAsTexture()</c>.
+    /// Created and destroyed by <see cref="FrameCapture"/> as needed.
+    /// </summary>
+    internal sealed class CaptureHelper : MonoBehaviour
+    {
+        /// <summary>
+        /// Invoked on the main thread with the fully composited screen texture.
+        /// The callee is responsible for destroying the texture.
+        /// </summary>
+        internal Action<Texture2D> OnFrame;
+
+        private bool _pending;
+
+        /// <summary>Schedules one capture at the end of the current frame.</summary>
+        internal void RequestCapture()
+        {
+            if (_pending) return;
+            _pending = true;
+            StartCoroutine(DoCaptureEndOfFrame());
+        }
+
+        private IEnumerator DoCaptureEndOfFrame()
+        {
+            yield return new WaitForEndOfFrame();
+            _pending = false;
+
+            Texture2D tex = ScreenCapture.CaptureScreenshotAsTexture();
+            try
+            {
+                OnFrame?.Invoke(tex);
+            }
+            catch (Exception ex)
+            {
+                UniPeekConstants.LogWarning($"[Capture] CaptureHelper OnFrame callback threw: {ex.Message}");
+                UnityEngine.Object.DestroyImmediate(tex);
             }
         }
     }
