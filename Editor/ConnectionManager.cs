@@ -532,18 +532,23 @@ namespace UniPeek
             }
 
 #if UNITY_WEBRTC
-            if (hello?.client == "flutter_webrtc" && Application.isPlaying)
+            if (hello?.client == "flutter_webrtc")
             {
-                Enqueue(() => StartWebRTCNegotiation(sessionId));
+                // Application.isPlaying must be read on the main thread.
+                Enqueue(() => { if (Application.isPlaying) StartWebRTCNegotiation(sessionId); });
                 return;
             }
 #endif
             UniPeekConstants.Log($"[WS] Hello from {hello?.client ?? "unknown"} ({hello?.deviceName ?? "?"}) session {sessionId}");
 
             // Tell the new client whether the editor is currently in Play Mode.
-            var playModeJson = UnityEngine.JsonUtility.ToJson(
-                new PlayModeMessage { type = "playmode", playing = Application.isPlaying });
-            _wsServer?.SendToSession(sessionId, playModeJson);
+            // Application.isPlaying is not thread-safe — enqueue to main thread.
+            Enqueue(() =>
+            {
+                var playModeJson = UnityEngine.JsonUtility.ToJson(
+                    new PlayModeMessage { type = "playmode", playing = Application.isPlaying });
+                _wsServer?.SendToSession(sessionId, playModeJson);
+            });
         }
 
         private void OnPlayModeStateChanged(PlayModeStateChange change)
@@ -637,7 +642,7 @@ namespace UniPeek
             // Stop JPEG pipeline immediately — WebRTC will carry video.
             if (_capture != null) _capture.UseWebRTC = true;
 
-            _webRtcStreamer = new WebRTCStreamer(Config.Width, Config.Height, 1_000_000);
+            _webRtcStreamer = new WebRTCStreamer(Config.Width, Config.Height);
 
             _webRtcStreamer.OfferReady += sdp =>
             {

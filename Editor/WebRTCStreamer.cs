@@ -49,7 +49,6 @@ namespace UniPeek
         // ── Configuration ─────────────────────────────────────────────────────
         private readonly int _width;
         private readonly int _height;
-        private readonly int _bitrate;
 
         // ── WebRTC objects ────────────────────────────────────────────────────
         private RTCPeerConnection _pc;
@@ -57,19 +56,17 @@ namespace UniPeek
         private MediaStream       _mediaStream;
         private RTCDataChannel    _dataChannel;
 
-        private bool _initialized;
         private bool _disposed;
+        private EditorCoroutine _updateCoroutine;
 
         // ── Constructor ───────────────────────────────────────────────────────
 
         /// <param name="width">Video width (pixels). Defaults to 1280.</param>
         /// <param name="height">Video height (pixels). Defaults to 720.</param>
-        /// <param name="bitrate">Target bitrate in bps. Defaults to 1 Mbps.</param>
-        public WebRTCStreamer(int width = 1280, int height = 720, int bitrate = 1_000_000)
+        public WebRTCStreamer(int width = 1280, int height = 720)
         {
-            _width   = width;
-            _height  = height;
-            _bitrate = bitrate;
+            _width  = width;
+            _height = height;
         }
 
         // ── Public API ────────────────────────────────────────────────────────
@@ -82,10 +79,6 @@ namespace UniPeek
         public void StartNegotiation()
         {
             if (_pc != null || _disposed) return;
-
-            // Prefer hardware encoder; fall back to software automatically.
-            WebRTC.Initialize(EncoderType.Hardware);
-            _initialized = true;
 
             var config = new RTCConfiguration
             {
@@ -108,7 +101,7 @@ namespace UniPeek
 
             if (cam != null)
             {
-                _videoTrack  = cam.CaptureStreamTrack(_width, _height, _bitrate);
+                _videoTrack  = cam.CaptureStreamTrack(_width, _height);
                 _mediaStream = new MediaStream();
                 _mediaStream.AddTrack(_videoTrack);
                 _pc.AddTrack(_videoTrack, _mediaStream);
@@ -125,8 +118,9 @@ namespace UniPeek
             _dataChannel.OnMessage = bytes =>
                 DataChannelMessage?.Invoke(Encoding.UTF8.GetString(bytes));
 
-            // ── Start offer creation ──────────────────────────────────────────
+            // ── Start offer creation and drive WebRTC update loop ─────────────
             EditorCoroutineUtility.StartCoroutineOwnerless(CreateOfferCoroutine());
+            _updateCoroutine = EditorCoroutineUtility.StartCoroutineOwnerless(UpdateLoop());
         }
 
         /// <summary>
@@ -156,10 +150,10 @@ namespace UniPeek
         }
 
         /// <summary>
-        /// Drives the WebRTC engine. <b>Must be called every editor update tick</b>
-        /// (hook into <c>EditorApplication.update</c>).
+        /// No-op in WebRTC 3.x — the engine is driven by the internal UpdateLoop coroutine.
+        /// Kept for API compatibility with ConnectionManager.
         /// </summary>
-        public void Tick() => WebRTC.Update();
+        public void Tick() { }
 
         /// <inheritdoc/>
         public void Dispose()
@@ -179,16 +173,22 @@ namespace UniPeek
             _pc?.Dispose();
             _pc = null;
 
-            if (_initialized)
+            if (_updateCoroutine != null)
             {
-                WebRTC.Dispose();
-                _initialized = false;
+                EditorCoroutineUtility.StopCoroutine(_updateCoroutine);
+                _updateCoroutine = null;
             }
 
             UniPeekConstants.Log("[WebRTC] Streamer disposed.");
         }
 
         // ── Coroutines ────────────────────────────────────────────────────────
+
+        private IEnumerator UpdateLoop()
+        {
+            while (!_disposed)
+                yield return WebRTC.Update();
+        }
 
         private IEnumerator CreateOfferCoroutine()
         {
