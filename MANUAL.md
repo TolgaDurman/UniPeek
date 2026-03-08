@@ -98,39 +98,197 @@ Switch between them at any time; the change takes effect on the next captured fr
 
 ## Touch Input
 
-When the phone sends a touch, UniPeek injects it into Unity's Input system so your game can respond to it as if a finger touched the screen.
+When the phone sends a touch, UniPeek delivers it through **two independent channels** that can be used together or separately:
 
-Works with both the **new Input System** package and the older **Legacy Input Manager**.
+| Channel | Class / API | Works with |
+|---|---|---|
+| **UniPeekInput events** | `UniPeekInput.OnTouch` / `OnTouchDetailed` | Both input systems |
+| **Unity Input System** | `ETouch.activeTouches`, `Touchscreen.current`, etc. | New Input System only |
 
-You can also subscribe to touch events from your own scripts:
+Touch overlays (semi-transparent circles) are drawn on the Game View automatically while touches are active.
+
+### UniPeekInput (works with both input systems)
+
+`UniPeekInput` is a lightweight static event bus. UniPeek fires its events on the main thread for every touch that arrives from the phone, regardless of which Unity input system is active.
 
 ```csharp
 using UniPeek;
+using UnityEngine;
 
-void OnEnable()
+public class Example : MonoBehaviour
 {
-    // Simple: fires for every touch with normalized position (x=0 left, y=0 top)
-    UniPeekInput.OnTouch += pos => Debug.Log($"Touch at {pos}");
+    void OnEnable()  => UniPeekInput.OnTouch += HandleTouch;
+    void OnDisable() => UniPeekInput.OnTouch -= HandleTouch;
 
-    // Detailed: fingerId, phase string, and normalized position
-    UniPeekInput.OnTouchDetailed += (id, phase, pos) =>
-        Debug.Log($"Finger {id} {phase} at {pos}");
-}
-
-void OnDisable()
-{
-    UniPeekInput.OnTouch         -= ...;
-    UniPeekInput.OnTouchDetailed -= ...;
+    void HandleTouch(Vector2 normalizedPos)
+    {
+        // normalizedPos.x : 0 = left edge,  1 = right edge
+        // normalizedPos.y : 0 = top edge,   1 = bottom edge
+        float screenX = normalizedPos.x * Screen.width;
+        float screenY = (1f - normalizedPos.y) * Screen.height; // flip Y for Unity screen space
+        Debug.Log($"Touch at screen ({screenX}, {screenY})");
+    }
 }
 ```
 
-Touch overlays (semi-transparent circles) are drawn on the Game View automatically while touches are active.
+#### OnTouchDetailed
+
+Use this when you need the finger ID or phase string:
+
+```csharp
+UniPeekInput.OnTouchDetailed += (fingerId, phase, normalizedPos) =>
+{
+    // phase: "began" | "moved" | "ended" | "canceled"
+    Debug.Log($"Finger {fingerId} {phase} at {normalizedPos}");
+};
+```
+
+#### When to use UniPeekInput
+
+- You are using the **old (Legacy) Input Manager** — this is the only reliable touch API in that case.
+- You want a simple callback without dealing with the Input System device layer.
+- You need to react to individual touch events (e.g. "tap began") rather than polling state every frame.
+
+### New Input System integration
+
+When `com.unity.inputsystem` is installed, UniPeek automatically injects all touches into a virtual `Touchscreen` device. You can read them using any standard Input System API.
+
+#### Single touch — polling
+
+```csharp
+using UnityEngine.InputSystem;
+
+var ts = Touchscreen.current;
+if (ts != null && ts.primaryTouch.press.isPressed)
+{
+    Vector2 pos = ts.primaryTouch.position.ReadValue();
+}
+```
+
+#### Multi-touch — Enhanced Touch
+
+Enable `EnhancedTouchSupport` once (e.g. in `OnEnable`) then read `ETouch.activeTouches` every frame:
+
+```csharp
+using UnityEngine.InputSystem.EnhancedTouch;
+using ETouch = UnityEngine.InputSystem.EnhancedTouch.Touch;
+
+void OnEnable()  => EnhancedTouchSupport.Enable();
+void OnDisable() => EnhancedTouchSupport.Disable();
+
+void Update()
+{
+    var touches = ETouch.activeTouches;
+
+    // Filter out Ended/Canceled — they linger for one frame after lift
+    int live = 0;
+    foreach (var t in touches)
+    {
+        if (t.phase == UnityEngine.InputSystem.TouchPhase.Ended ||
+            t.phase == UnityEngine.InputSystem.TouchPhase.Canceled) continue;
+        live++;
+    }
+}
+```
+
+> **Important:** Always filter out `Ended` and `Canceled` phases when counting active fingers.
+> Enhanced Touch keeps a lifted touch in `activeTouches` for one frame after it ends,
+> which can cause spurious multi-touch events if you only check `Count`.
+
+#### Coordinate system
+
+UniPeek's phone sends **normalised** coordinates where `(0, 0)` is the **top-left** of the screen. Unity's Input System uses **screen pixels** where `(0, 0)` is the **bottom-left**.
+
+UniPeek applies the conversion automatically before injecting into the Input System:
+
+```
+screenX = normalizedX × Screen.width
+screenY = (1 − normalizedY) × Screen.height   // Y-flip
+```
+
+When reading via `UniPeekInput`, the coordinates are still in the raw normalised form (Y = 0 at top). Apply the same flip yourself when converting to screen or world space.
+
+### Pinch-to-scale example
+
+The finger-pair baseline must be reset whenever the tracked pair changes (e.g. a third finger joins, or one of the original two lifts while the other stays down).
+
+```csharp
+private float _prevPinchDist = -1f;
+private int   _pinchId0 = -1, _pinchId1 = -1;
+
+void Update()
+{
+    var touches = ETouch.activeTouches;
+
+    ETouch t0 = default, t1 = default;
+    int live = 0;
+    for (int i = 0; i < touches.Count && live < 2; i++)
+    {
+        var ph = touches[i].phase;
+        if (ph == UnityEngine.InputSystem.TouchPhase.Ended ||
+            ph == UnityEngine.InputSystem.TouchPhase.Canceled) continue;
+        if (live == 0) t0 = touches[i]; else t1 = touches[i];
+        live++;
+    }
+
+    if (live >= 2)
+    {
+        // Reset when the finger pair changes
+        if (t0.touchId != _pinchId0 || t1.touchId != _pinchId1)
+        {
+            _prevPinchDist = -1f;
+            _pinchId0 = t0.touchId;
+            _pinchId1 = t1.touchId;
+        }
+
+        float dist = Vector2.Distance(t0.screenPosition, t1.screenPosition);
+        if (_prevPinchDist > 0f)
+        {
+            float ratio = dist / _prevPinchDist;
+            float s = Mathf.Clamp(transform.localScale.x * ratio, 0.1f, 5f);
+            transform.localScale = Vector3.one * s;
+        }
+        _prevPinchDist = dist;
+    }
+    else
+    {
+        _prevPinchDist = -1f;
+        _pinchId0 = _pinchId1 = -1;
+    }
+}
+```
+
+### Touch Input quick reference
+
+| What you want | Recommended API |
+|---|---|
+| Simple tap callback | `UniPeekInput.OnTouch` |
+| Phase + finger ID | `UniPeekInput.OnTouchDetailed` |
+| Single-touch polling | `Touchscreen.current.primaryTouch` |
+| Multi-touch / pinch | `ETouch.activeTouches` (Enhanced Touch) |
+| Old Input Manager support | `UniPeekInput` events (only reliable option) |
 
 ---
 
 ## Gyroscope and Accelerometer
 
 The phone continuously sends gyroscope (rotation rate) and accelerometer (gravity + motion) data to Unity. This is injected as virtual sensor devices — your game code reads `Input.gyro` or the new Input System's `AttitudeSensor` and `Accelerometer` devices as normal.
+
+### Accelerometer
+
+```csharp
+// New Input System
+var accel = Accelerometer.current;
+if (accel != null)
+    Vector3 g = accel.acceleration.ReadValue();
+
+// Legacy
+Vector3 g = Input.acceleration;
+```
+
+### Gyroscope
+
+Gyroscope data from the phone is currently forwarded via `UniPeekInput` only (the new Input System gyro stub is not yet fully integrated). Legacy `Input.gyro` injection is not supported by Unity's public API.
 
 ---
 
