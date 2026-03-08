@@ -40,11 +40,10 @@ namespace UniPeek
         /// <param name="fingerId">Touch finger identifier (0-based).</param>
         public static void InjectTouch(string phase, float normalizedX, float normalizedY, int fingerId)
         {
-            // Convert normalised → editor window space.
-            // In the Unity Editor the InputSystemUIInputModule uses y=0 at the TOP
-            // (window/editor convention), so do NOT flip Y here.
+            // Convert normalised → screen pixels.
+            // Phone sends Y=0 at top; Unity InputSystem uses Y=0 at bottom → flip Y.
             float screenX = normalizedX * Screen.width;
-            float screenY = normalizedY * Screen.height;
+            float screenY = (1f - normalizedY) * Screen.height;
 
 #if ENABLE_INPUT_SYSTEM
             InjectTouchNewInputSystem(phase, screenX, screenY, fingerId);

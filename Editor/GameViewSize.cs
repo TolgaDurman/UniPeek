@@ -40,7 +40,7 @@ namespace UniPeek
             var ctor = sizeType?.GetConstructor(
                 new[] { sizeEnumType, typeof(int), typeof(int), typeof(string) });
             // enum value 1 == FixedResolution
-            return ctor?.Invoke(new object[] { 1, width, height, "BackBufferCapture" });
+            return ctor?.Invoke(new object[] { 1, width, height, "UniPeekCapture" });
         }
 
         static object FindExistingSlot()
@@ -58,7 +58,7 @@ namespace UniPeek
                 var label = itr.Current?.GetType()
                     .GetField("m_BaseText", BindingFlags.NonPublic | BindingFlags.Instance)
                     ?.GetValue(itr.Current) as string;
-                if (label == "BackBufferCapture") return itr.Current;
+                if (label == "UniPeekCapture") return itr.Current;
             }
             return null;
         }
@@ -84,7 +84,7 @@ namespace UniPeek
         // ── Public surface (matches the package's API) ────────────────────────
 
         /// <summary>
-        /// Creates or reuses the "BackBufferCapture" custom Game View size slot
+        /// Creates or reuses the "UniPeekCapture" custom Game View size slot
         /// and sets it to <paramref name="width"/> × <paramref name="height"/>.
         /// Returns the size object required by <see cref="SelectSize"/>.
         /// </summary>
