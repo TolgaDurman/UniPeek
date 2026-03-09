@@ -10,7 +10,8 @@ namespace UniPeek
     {
         // ── Persistent settings ───────────────────────────────────────────────
         private bool _requirePlayMode;
-        private bool _useWebRtc;
+        private SocketMode _socketMode;
+        private LogLevel   _logLevel;
 
         // Survives domain reloads; claimed with DeleteKey to prevent double-start.
         private const string PrefPendingStart = "UniPeek_PendingStart";
@@ -34,9 +35,13 @@ namespace UniPeek
 
         // ── Assets ────────────────────────────────────────────────────────────
         private Texture2D _logoTexture;
+        private Texture2D _proIcon;
 
         // ── Editor name ───────────────────────────────────────────────────────
         private string _editorName = string.Empty;
+
+        // ── Port ──────────────────────────────────────────────────────────────
+        private int _port = UniPeekConstants.DefaultPort;
 
         // ── Reverse-connection UI ─────────────────────────────────────────────
         private string  _reverseIp        = string.Empty;
@@ -75,6 +80,8 @@ namespace UniPeek
 
             _logoTexture = AssetDatabase.LoadAssetAtPath<Texture2D>(
                 "Assets/Plugins/UniPeek/Textures/unipeek-logo.png");
+            _proIcon = AssetDatabase.LoadAssetAtPath<Texture2D>(
+                "Assets/Plugins/UniPeek/Textures/pro-user.png");
 
             EditorApplication.playModeStateChanged += OnPlayModeChanged;
 
@@ -193,7 +200,7 @@ namespace UniPeek
                     primaryText   = string.IsNullOrWhiteSpace(_editorName)
                         ? System.Environment.MachineName
                         : _editorName;
-                    secondaryText = $"{QRCodeGenerator.GetLocalIPv4()}:{UniPeekConstants.DefaultPort}";
+                    secondaryText = $"{QRCodeGenerator.GetLocalIPv4()}:{ConnectionManager.Instance.Port}";
                     break;
                 case ConnectionState.Connected:
                     dotColor = ColGreen;
@@ -330,14 +337,13 @@ namespace UniPeek
             }
 
             EditorGUI.BeginChangeCheck();
-            using (new EditorGUILayout.HorizontalScope())
-            {
-                GUILayout.Space(2f);
-                _requirePlayMode = EditorGUILayout.ToggleLeft(
-                    "Only run in Play Mode", _requirePlayMode);
-            }
+            var pmIndex = EditorGUILayout.Popup("Run in Play Mode", _requirePlayMode ? 0 : 1,
+                new[] { "True", "False" });
             if (EditorGUI.EndChangeCheck())
+            {
+                _requirePlayMode = pmIndex == 0;
                 SavePrefs();
+            }
 
             if (!_requirePlayMode)
             {
@@ -351,22 +357,25 @@ namespace UniPeek
             GUILayout.Space(4f);
 #if UNITY_WEBRTC
             EditorGUI.BeginChangeCheck();
-            using (new EditorGUILayout.HorizontalScope())
-            {
-                GUILayout.Space(2f);
-                _useWebRtc = EditorGUILayout.ToggleLeft("Use WebRTC (low-latency video)", _useWebRtc);
-            }
+            _socketMode = (SocketMode)EditorGUILayout.EnumPopup("Socket Mode", _socketMode);
             if (EditorGUI.EndChangeCheck())
                 SavePrefs();
-
-            if (!_useWebRtc)
-            {
-                EditorGUILayout.HelpBox(
-                    "WebRTC disabled — the phone will use JPEG streaming over WebSocket.",
-                    MessageType.None);
-            }
-            GUILayout.Space(4f);
+#else
+            EditorGUI.BeginDisabledGroup(true);
+            EditorGUILayout.EnumPopup("Socket Mode", SocketMode.WebSocket);
+            EditorGUI.EndDisabledGroup();
+            EditorGUILayout.HelpBox("Install com.unity.webrtc to enable WebRTC mode.", MessageType.None);
 #endif
+
+            EditorGUI.BeginChangeCheck();
+            _logLevel = (LogLevel)EditorGUILayout.EnumPopup("Log Level", _logLevel);
+            if (EditorGUI.EndChangeCheck())
+            {
+                UniPeekConstants.CurrentLogLevel = _logLevel;
+                SavePrefs();
+            }
+
+            GUILayout.Space(4f);
             var mgr = ConnectionManager.Instance;
             EditorGUI.BeginChangeCheck();
             var newMethod = (CaptureMethod)EditorGUILayout.EnumPopup("Capture Method", mgr.ActiveCaptureMethod);
@@ -402,6 +411,8 @@ namespace UniPeek
                 using var card = new EditorGUILayout.HorizontalScope(EditorStyles.helpBox);
                 DrawColorDot(ColGreen);
                 GUILayout.Space(2f);
+                if (d.IsPro && _proIcon != null)
+                    GUILayout.Label(_proIcon, GUILayout.Width(16f), GUILayout.Height(16f));
                 GUILayout.Label(d.DeviceName, GUILayout.ExpandWidth(true));
                 GUILayout.Label(
                     d.ConnectedAt.ToLocalTime().ToString("HH:mm:ss"),
@@ -448,7 +459,16 @@ namespace UniPeek
             GUILayout.Space(2f);
 
             using var row = new EditorGUILayout.HorizontalScope(EditorStyles.toolbar);
-            GUILayout.Label($"Port {UniPeekConstants.DefaultPort}", EditorStyles.miniLabel);
+            GUILayout.Label("Port", EditorStyles.miniLabel, GUILayout.Width(28f));
+            EditorGUI.BeginDisabledGroup(_streaming);
+            var newPort = EditorGUILayout.IntField(_port, EditorStyles.toolbarTextField, GUILayout.Width(50f));
+            if (newPort != _port && newPort > 1024 && newPort <= 65535)
+            {
+                _port = newPort;
+                SavePrefs();
+                QRCodeGenerator.Invalidate();
+            }
+            EditorGUI.EndDisabledGroup();
             GUILayout.FlexibleSpace();
 
             if (GUILayout.Button("Docs", EditorStyles.toolbarButton, GUILayout.Width(38f)))
@@ -541,7 +561,7 @@ namespace UniPeek
 
         private void DoStartStreaming()
         {
-            ConnectionManager.Instance.StartStreaming();
+            ConnectionManager.Instance.StartStreaming(_port);
             _streaming = true;
 
             if (!_requirePlayMode)
@@ -614,7 +634,7 @@ namespace UniPeek
 
         private void RefreshQR()
             => _qrTexture = QRCodeGenerator.GetConnectionQR(
-                UniPeekConstants.DefaultPort, pixelsPerModule: 8);
+                _port, pixelsPerModule: 8);
 
         private void DestroyQR() => _qrTexture = null;
 
@@ -631,7 +651,10 @@ namespace UniPeek
         private void LoadPrefs()
         {
             _requirePlayMode = EditorPrefs.GetBool(UniPeekConstants.PrefAutoStopPlay, true);
-            _useWebRtc       = EditorPrefs.GetBool(UniPeekConstants.PrefWebRtcEnabled, true);
+            _socketMode      = (SocketMode)EditorPrefs.GetInt(UniPeekConstants.PrefSocketMode, (int)SocketMode.WebRTC);
+            _logLevel        = (LogLevel)EditorPrefs.GetInt(UniPeekConstants.PrefLogLevel, (int)LogLevel.All);
+            _port            = EditorPrefs.GetInt(UniPeekConstants.PrefPort, UniPeekConstants.DefaultPort);
+            UniPeekConstants.CurrentLogLevel = _logLevel;
 
             // File takes priority — it's written synchronously so it's crash-safe.
             if (System.IO.File.Exists(EditorNameFilePath))
@@ -643,8 +666,10 @@ namespace UniPeek
         private void SavePrefs()
         {
             EditorPrefs.SetBool(UniPeekConstants.PrefAutoStopPlay, _requirePlayMode);
-            EditorPrefs.SetBool(UniPeekConstants.PrefWebRtcEnabled, _useWebRtc);
+            EditorPrefs.SetInt(UniPeekConstants.PrefSocketMode, (int)_socketMode);
+            EditorPrefs.SetInt(UniPeekConstants.PrefLogLevel, (int)_logLevel);
             EditorPrefs.SetString(UniPeekConstants.PrefEditorName, _editorName);
+            EditorPrefs.SetInt(UniPeekConstants.PrefPort, _port);
 
             // Also write to file for crash resilience.
             try

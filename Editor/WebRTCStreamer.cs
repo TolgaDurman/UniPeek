@@ -86,13 +86,9 @@ namespace UniPeek
         public void StartNegotiation()
         {
             if (_pc != null || _disposed) return;
-
             var config = new RTCConfiguration
             {
-                iceServers = new[]
-                {
-                    new RTCIceServer { urls = new[] { "stun:stun.l.google.com:19302" } },
-                },
+                iceServers = Array.Empty<RTCIceServer>(),
             };
 
             _pc = new RTCPeerConnection(ref config);

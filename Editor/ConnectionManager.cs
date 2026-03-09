@@ -36,6 +36,8 @@ namespace UniPeek
         public string IPAddress  { get; init; }
         /// <summary>UTC time when the device connected.</summary>
         public DateTime ConnectedAt { get; init; }
+        /// <summary>Whether the device has a Pro tier subscription.</summary>
+        public bool IsPro { get; init; }
     }
 
     // ── Streaming configuration ───────────────────────────────────────────────
@@ -84,6 +86,9 @@ namespace UniPeek
         // ── Observed state (main-thread readable) ─────────────────────────────
         /// <summary>Current connection state.</summary>
         public ConnectionState State { get; private set; } = ConnectionState.Disconnected;
+
+        /// <summary>The port the WebSocket server is (or will be) listening on.</summary>
+        public int Port { get; private set; } = UniPeekConstants.DefaultPort;
 
         /// <summary>Read-only view of all currently connected devices.</summary>
         public IReadOnlyList<DeviceInfo> ConnectedDevices => _devices;
@@ -141,7 +146,16 @@ namespace UniPeek
 
         // ── Constructor / dispose ─────────────────────────────────────────────
 
-        private ConnectionManager() { }
+        private ConnectionManager()
+        {
+            AssemblyReloadEvents.beforeAssemblyReload += OnBeforeAssemblyReload;
+        }
+
+        private void OnBeforeAssemblyReload()
+        {
+            AssemblyReloadEvents.beforeAssemblyReload -= OnBeforeAssemblyReload;
+            StopStreaming();
+        }
 
         /// <inheritdoc/>
         public void Dispose()
@@ -156,15 +170,17 @@ namespace UniPeek
         /// Starts the WebSocket server and mDNS advertiser.
         /// Also auto-configures the Windows firewall on first run.
         /// </summary>
-        public void StartStreaming()
+        public void StartStreaming(int port = UniPeekConstants.DefaultPort)
         {
             if (State != ConnectionState.Disconnected) return;
 
+            Port = port;
+
             // One-time Windows firewall setup
-            FirewallHelper.EnsureFirewallRule(UniPeekConstants.DefaultPort);
+            FirewallHelper.EnsureFirewallRule(port);
 
             // Boot WebSocket server
-            _wsServer = new UniPeekWebSocketServer(UniPeekConstants.DefaultPort);
+            _wsServer = new UniPeekWebSocketServer(port);
             _wsServer.ClientConnected    += OnClientConnected;
             _wsServer.ClientDisconnected += OnClientDisconnected;
             _wsServer.ConfigReceived     += OnConfigReceived;
@@ -200,7 +216,7 @@ namespace UniPeek
             // Boot mDNS
             string localIp    = QRCodeGenerator.GetLocalIPv4();
             string editorName = EditorPrefs.GetString(UniPeekConstants.PrefEditorName, string.Empty);
-            _mdns = new MdnsAdvertiser(UniPeekConstants.DefaultPort, localIp, editorName);
+            _mdns = new MdnsAdvertiser(port, localIp, editorName);
             _mdns.Start();
 
             // Boot encoder + capture
@@ -543,6 +559,7 @@ namespace UniPeek
                             DeviceName  = hello.deviceName,
                             IPAddress   = old.IPAddress,
                             ConnectedAt = old.ConnectedAt,
+                            IsPro       = hello.tier == "pro",
                         };
                         DeviceConnected?.Invoke(_devices[idx]);
                     }
@@ -555,7 +572,7 @@ namespace UniPeek
                 // EditorPrefs and StartWebRTCNegotiation both require the main thread.
                 Enqueue(() =>
                 {
-                    if (EditorPrefs.GetBool(UniPeekConstants.PrefWebRtcEnabled, true))
+                    if ((SocketMode)EditorPrefs.GetInt(UniPeekConstants.PrefSocketMode, (int)SocketMode.WebRTC) == SocketMode.WebRTC)
                         StartWebRTCNegotiation(sessionId);
                     else
                         _wsServer?.CloseSession(sessionId);
@@ -703,7 +720,15 @@ namespace UniPeek
 
             _webRtcStreamer.DataChannelMessage += json => Enqueue(() => HandleInputJson(json));
 
-            _webRtcStreamer.StartNegotiation();
+            try
+            {
+                _webRtcStreamer.StartNegotiation();
+            }
+            catch (Exception ex)
+            {
+                UniPeekConstants.LogError($"[WebRTC] StartNegotiation failed: {ex.Message}");
+                TearDownWebRTC();
+            }
         }
 
         private void TearDownWebRTC()

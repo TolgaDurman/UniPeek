@@ -2,6 +2,28 @@ using UnityEngine;
 
 namespace UniPeek
 {
+    /// <summary>Controls how verbose UniPeek's console output is.</summary>
+    public enum LogLevel
+    {
+        /// <summary>No console output at all.</summary>
+        None,
+        /// <summary>Errors only.</summary>
+        Error,
+        /// <summary>Warnings and errors.</summary>
+        Warning,
+        /// <summary>All messages (info, warnings, errors).</summary>
+        All,
+    }
+
+    /// <summary>Transport protocol used when a Flutter client connects.</summary>
+    public enum SocketMode
+    {
+        /// <summary>JPEG frames streamed over WebSocket.</summary>
+        WebSocket,
+        /// <summary>Low-latency video via WebRTC (requires com.unity.webrtc).</summary>
+        WebRTC,
+    }
+
     /// <summary>
     /// Shared constants, port numbers, and logging utilities for the UniPeek plugin.
     /// All other UniPeek components reference this class for configuration defaults.
@@ -55,17 +77,39 @@ namespace UniPeek
         /// </summary>
         public const string PrefPersistStreaming = "UniPeek_PersistStreaming";
 
-        /// <summary>EditorPrefs key for the WebRTC streaming toggle (defaults to true when the package is present).</summary>
-        public const string PrefWebRtcEnabled = "UniPeek_WebRtcEnabled";
+        /// <summary>EditorPrefs key for the active <see cref="SocketMode"/>.</summary>
+        public const string PrefSocketMode = "UniPeek_SocketMode";
+
+        /// <summary>EditorPrefs key for the user-configured WebSocket port.</summary>
+        public const string PrefPort = "UniPeek_Port";
+
+        /// <summary>EditorPrefs key for the active <see cref="LogLevel"/>.</summary>
+        public const string PrefLogLevel = "UniPeek_LogLevel";
+
+        // ── Runtime log level ─────────────────────────────────────────────────
+        /// <summary>Active log verbosity. Set by the editor window; read by the log helpers below.</summary>
+        public static LogLevel CurrentLogLevel { get; set; } = LogLevel.All;
 
         // ── Logging helpers ──────────────────────────────────────────────────
-        /// <summary>Writes an info-level message tagged with [UniPeek].</summary>
-        public static void Log(string message) => Debug.Log($"[UniPeek] {message}");
+        /// <summary>Writes an info-level message tagged with [UniPeek] when <see cref="CurrentLogLevel"/> is <c>All</c>.</summary>
+        public static void Log(string message)
+        {
+            if (CurrentLogLevel == LogLevel.All)
+                Debug.Log($"[UniPeek] {message}");
+        }
 
-        /// <summary>Writes a warning-level message tagged with [UniPeek].</summary>
-        public static void LogWarning(string message) => Debug.LogWarning($"[UniPeek] {message}");
+        /// <summary>Writes a warning tagged with [UniPeek] when <see cref="CurrentLogLevel"/> is <c>Warning</c> or higher.</summary>
+        public static void LogWarning(string message)
+        {
+            if (CurrentLogLevel >= LogLevel.Warning)
+                Debug.LogWarning($"[UniPeek] {message}");
+        }
 
-        /// <summary>Writes an error-level message tagged with [UniPeek].</summary>
-        public static void LogError(string message) => Debug.LogError($"[UniPeek] {message}");
+        /// <summary>Writes an error tagged with [UniPeek] unless <see cref="CurrentLogLevel"/> is <c>None</c>.</summary>
+        public static void LogError(string message)
+        {
+            if (CurrentLogLevel >= LogLevel.Error)
+                Debug.LogError($"[UniPeek] {message}");
+        }
     }
 }
