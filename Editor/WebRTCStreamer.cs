@@ -105,7 +105,7 @@ namespace UniPeek
             if (mainCam == null && Camera.allCameras.Length > 0)
                 mainCam = Camera.allCameras[0];
 
-            _renderTexture = new RenderTexture(_width, _height, 24, RenderTextureFormat.BGRA32);
+            _renderTexture = new RenderTexture(_width, _height, 24, RenderTextureFormat.BGRA32, RenderTextureReadWrite.sRGB);
             _renderTexture.Create();
             _videoTrack  = new VideoStreamTrack(_renderTexture);
             _mediaStream = new MediaStream();

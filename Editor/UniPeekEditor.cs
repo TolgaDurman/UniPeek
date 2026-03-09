@@ -472,7 +472,7 @@ namespace UniPeek
             GUILayout.FlexibleSpace();
 
             if (GUILayout.Button("Docs", EditorStyles.toolbarButton, GUILayout.Width(38f)))
-                Application.OpenURL("https://github.com/TolgaDurman/unipeek-unity#readme");
+                Application.OpenURL("https://unipeek.app");
 
             if (GUILayout.Button("Reset FW", EditorStyles.toolbarButton, GUILayout.Width(58f)))
                 FirewallHelper.ResetAndReConfigure();
