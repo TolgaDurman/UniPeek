@@ -427,7 +427,7 @@ namespace UniPeek
         private void DrawReverseConnectionPanel()
         {
             _showReversePanel = EditorGUILayout.Foldout(
-                _showReversePanel, "Reverse Connection", toggleOnLabelClick: true);
+                _showReversePanel, "Reverse Connection (Android Only)", toggleOnLabelClick: true);
 
             if (!_showReversePanel) return;
 

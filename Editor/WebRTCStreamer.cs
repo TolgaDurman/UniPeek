@@ -6,6 +6,7 @@ using System.Collections;
 using System.Text;
 using Unity.EditorCoroutines.Editor;
 using Unity.WebRTC;
+using UnityEditor;
 using UnityEngine;
 
 namespace UniPeek
@@ -49,6 +50,8 @@ namespace UniPeek
         // ── Configuration ─────────────────────────────────────────────────────
         private readonly int _width;
         private readonly int _height;
+        private double _captureInterval; // seconds between frames = 1 / fpsCap
+        private double _lastCaptureTime;
 
         // ── WebRTC objects ────────────────────────────────────────────────────
         private RTCPeerConnection _pc;
@@ -58,10 +61,8 @@ namespace UniPeek
 
         private bool _disposed;
 
-        // Capture camera — hidden secondary camera used in Edit Mode
+        // Render texture fed directly to the VideoStreamTrack
         private RenderTexture _renderTexture;
-        private Camera        _captureCamera;
-        private GameObject    _cameraGo;
 
         // Play Mode overlay capture (same CaptureHelper as JPEG pipeline)
         private CaptureHelper _captureHelper;
@@ -70,11 +71,17 @@ namespace UniPeek
 
         /// <param name="width">Video width (pixels). Defaults to 1280.</param>
         /// <param name="height">Video height (pixels). Defaults to 720.</param>
-        public WebRTCStreamer(int width = 1280, int height = 720)
+        /// <param name="fpsCap">Maximum capture rate (frames/second). Defaults to 30.</param>
+        public WebRTCStreamer(int width = 1280, int height = 720, int fpsCap = 30)
         {
-            _width  = width;
-            _height = height;
+            _width           = width;
+            _height          = height;
+            _captureInterval = fpsCap > 0 ? 1.0 / fpsCap : 1.0 / 30.0;
         }
+
+        /// <summary>Updates the FPS cap. Takes effect on the next capture.</summary>
+        public void SetFpsCap(int fpsCap)
+            => _captureInterval = fpsCap > 0 ? 1.0 / fpsCap : 1.0 / 30.0;
 
         // ── Public API ────────────────────────────────────────────────────────
 
@@ -97,35 +104,23 @@ namespace UniPeek
             _pc.OnConnectionStateChange = OnConnectionStateChange;
             _pc.OnDataChannel           = OnRemoteDataChannel;
 
-            // ── Video track via hidden secondary camera ────────────────────────
-            // Using Camera.CaptureStreamTrack redirects camera.targetTexture and
-            // breaks the Game View. Instead, create a hidden camera that renders
-            // into our own RenderTexture without touching Camera.main.
-            var mainCam = Camera.main;
-            if (mainCam == null && Camera.allCameras.Length > 0)
-                mainCam = Camera.allCameras[0];
-
+            // ── Video track ────────────────────────────────────────────────────
+            // sRGB read-write ensures the camera's linear output is gamma-corrected
+            // when written to the RT, matching the WebSocket/JPEG capture path.
+            // Clone-camera approaches (CopyFrom) do not copy UniversalAdditionalCameraData
+            // so URP skips its final sRGB blit — hence we drive Camera.main directly.
             _renderTexture = new RenderTexture(_width, _height, 24, RenderTextureFormat.BGRA32, RenderTextureReadWrite.sRGB);
             _renderTexture.Create();
-            _videoTrack  = new VideoStreamTrack(_renderTexture);
+            // In a linear project VideoStreamTrack's internal blit (VerticalFlipCopy) runs
+            // outside a camera context where GL.sRGBWrite defaults to false.  On D3D11
+            // Unity then uses a UNORM (non-sRGB) RTV, so the linear→sRGB conversion is
+            // skipped and the encoder receives linearised bytes → washed-out colours.
+            // Force GL.sRGBWrite=true around the blit so the sRGB RTV is used and the
+            // correct gamma-corrected bytes reach the encoder.
+            _videoTrack = new VideoStreamTrack(_renderTexture, LinearSafeFlipCopy);
             _mediaStream = new MediaStream();
             _mediaStream.AddTrack(_videoTrack);
             _pc.AddTrack(_videoTrack, _mediaStream);
-
-            if (mainCam != null)
-            {
-                _cameraGo = new GameObject("UniPeekWebRTCCapture")
-                    { hideFlags = HideFlags.HideAndDontSave };
-                _captureCamera = _cameraGo.AddComponent<Camera>();
-                _captureCamera.CopyFrom(mainCam);
-                _captureCamera.targetTexture = _renderTexture;
-                _captureCamera.enabled = false; // driven manually in UpdateLoop
-                UniPeekConstants.Log($"[WebRTC] Capture camera created from '{mainCam.name}'.");
-            }
-            else
-            {
-                UniPeekConstants.LogWarning("[WebRTC] No camera found — video track will be blank.");
-            }
 
             // ── Data channel (input messages from Flutter) ────────────────────
             var dcInit = new RTCDataChannelInit { ordered = true };
@@ -201,13 +196,6 @@ namespace UniPeek
                 _captureHelper = null;
             }
 
-            if (_cameraGo != null)
-            {
-                UnityEngine.Object.DestroyImmediate(_cameraGo);
-                _cameraGo      = null;
-                _captureCamera = null;
-            }
-
             if (_renderTexture != null)
             {
                 _renderTexture.Release();
@@ -236,19 +224,33 @@ namespace UniPeek
 
         // In Play Mode: schedules a full-screen capture (including Overlay canvases)
         // via CaptureHelper, then blits the result into _renderTexture each frame.
-        // In Edit Mode: renders the secondary camera directly (no overlay UI support).
+        // In Edit Mode: renders Camera.main directly into _renderTexture (same as the
+        // WebSocket JPEG path) so the full URP pipeline — including the final sRGB
+        // output blit — runs correctly. Clone-camera approaches skip that final pass
+        // because CopyFrom does not copy UniversalAdditionalCameraData.
         private IEnumerator CameraLoop()
         {
+            _lastCaptureTime = EditorApplication.timeSinceStartup - _captureInterval;
+
             while (!_disposed)
             {
+                // Respect the FPS cap — skip this tick if the interval hasn't elapsed.
+                double now = EditorApplication.timeSinceStartup;
+                if (now - _lastCaptureTime < _captureInterval)
+                {
+                    yield return null;
+                    continue;
+                }
+                _lastCaptureTime = now;
+
                 if (Application.isPlaying)
                 {
                     if (_captureHelper == null)
                     {
                         var go = new GameObject("[UniPeek] WebRTCCapture")
                             { hideFlags = HideFlags.HideAndDontSave };
-                        _captureHelper           = go.AddComponent<CaptureHelper>();
-                        _captureHelper.OnFrame   = OnCaptureFrame;
+                        _captureHelper         = go.AddComponent<CaptureHelper>();
+                        _captureHelper.OnFrame = OnCaptureFrame;
                     }
                     _captureHelper.RequestCapture();
                 }
@@ -260,37 +262,16 @@ namespace UniPeek
                         _captureHelper = null;
                     }
 
-                    // Recreate the secondary camera if it was destroyed (e.g. the
-                    // capture camera was created during Play Mode and Unity destroyed
-                    // all Play Mode objects when exiting Play Mode).
-                    if (_captureCamera == null)
+                    var cam = Camera.main;
+                    if (cam == null && Camera.allCameras.Length > 0)
+                        cam = Camera.allCameras[0];
+
+                    if (cam != null)
                     {
-                        var mainCam = Camera.main;
-                        if (mainCam == null && Camera.allCameras.Length > 0)
-                            mainCam = Camera.allCameras[0];
-
-                        if (mainCam != null)
-                        {
-                            if (_cameraGo != null)
-                                UnityEngine.Object.DestroyImmediate(_cameraGo);
-
-                            _cameraGo = new GameObject("UniPeekWebRTCCapture")
-                                { hideFlags = HideFlags.HideAndDontSave };
-                            _captureCamera = _cameraGo.AddComponent<Camera>();
-                            _captureCamera.CopyFrom(mainCam);
-                            _captureCamera.targetTexture = _renderTexture;
-                            _captureCamera.enabled = false;
-                            UniPeekConstants.Log("[WebRTC] Capture camera recreated after Play Mode exit.");
-                        }
-                    }
-
-                    if (_captureCamera != null)
-                    {
-                        var main = Camera.main;
-                        if (main != null)
-                            _captureCamera.transform.SetPositionAndRotation(
-                                main.transform.position, main.transform.rotation);
-                        _captureCamera.Render();
+                        var prev = cam.targetTexture;
+                        cam.targetTexture = _renderTexture;
+                        cam.Render();
+                        cam.targetTexture = prev;
                     }
                 }
                 yield return null;
@@ -302,6 +283,27 @@ namespace UniPeek
             if (_renderTexture != null)
                 Graphics.Blit(tex, _renderTexture);
             UnityEngine.Object.DestroyImmediate(tex);
+        }
+
+        // VideoStreamTrack's default VerticalFlipCopy runs outside a camera context
+        // where GL.sRGBWrite is false.  Without it the UNORM RTV is used instead of
+        // UNORM_SRGB, so the linear→sRGB conversion is skipped and the encoder gets
+        // raw linear bytes.  Explicitly enable sRGB write for the duration of the blit.
+        private static readonly Vector2 s_flipScale  = new Vector2(1f, -1f);
+        private static readonly Vector2 s_flipOffset = new Vector2(0f,  1f);
+        private static void LinearSafeFlipCopy(Texture source, RenderTexture dest)
+        {
+            if (QualitySettings.activeColorSpace == ColorSpace.Linear)
+            {
+                bool prev = GL.sRGBWrite;
+                GL.sRGBWrite = true;
+                Graphics.Blit(source, dest, s_flipScale, s_flipOffset);
+                GL.sRGBWrite = prev;
+            }
+            else
+            {
+                Graphics.Blit(source, dest, s_flipScale, s_flipOffset);
+            }
         }
 
         private IEnumerator CreateOfferCoroutine()

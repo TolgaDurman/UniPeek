@@ -329,6 +329,9 @@ namespace UniPeek
             _capture?.SetResolution(width, height);
             _capture?.SetFpsCap(fpsCap);
             _encoder?.SetQuality(quality);
+#if UNITY_WEBRTC
+            _webRtcStreamer?.SetFpsCap(fpsCap);
+#endif
 
             // Resize the Game View so ScreenCapture captures at the phone's exact
             // resolution — avoids stretching when aspect ratios differ.
@@ -683,7 +686,7 @@ namespace UniPeek
             // Stop JPEG pipeline immediately — WebRTC will carry video.
             if (_capture != null) _capture.UseWebRTC = true;
 
-            _webRtcStreamer = new WebRTCStreamer(Config.Width, Config.Height);
+            _webRtcStreamer = new WebRTCStreamer(Config.Width, Config.Height, Config.FpsCap);
 
             _webRtcStreamer.OfferReady += sdp =>
             {
