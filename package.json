@@ -20,7 +20,7 @@
   ],
   "category": "Editor",
   "dependencies": {
-    "com.unity.webrtc": "3.0.0-pre.8",
+    "com.unity.webrtc": "3.0.0",
     "com.unity.editorcoroutines": "1.0.0"
   }
 }
