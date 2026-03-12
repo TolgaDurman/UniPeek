@@ -18,5 +18,8 @@
     "editor",
     "developer-tools"
   ],
-  "category": "Editor"
+  "category": "Editor",
+  "dependencies": {
+    "com.unity.webrtc": "3.0.0-pre.8"
+  }
 }
