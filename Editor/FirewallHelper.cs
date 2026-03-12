@@ -45,7 +45,6 @@ namespace UniPeek
         /// Use this from the UniPeek window or the menu item below to test
         /// the setup flow on your own machine.
         /// </summary>
-        [MenuItem("Window/UniPeek/Reset Firewall Setup")]
         public static void ResetAndReConfigure()
         {
             ResetFlag();

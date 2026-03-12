@@ -58,7 +58,7 @@ namespace UniPeek
         // Menu item
         // ─────────────────────────────────────────────────────────────────────
 
-        [MenuItem("Window/UniPeek/Open")]
+        [MenuItem("Window/UniPeek")]
         public static void ShowWindow()
         {
             var logoTex = AssetDatabase.LoadAssetAtPath<Texture2D>(

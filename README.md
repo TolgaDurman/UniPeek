@@ -44,8 +44,9 @@ Install the plugin via Unity Asset Store or git
 ### 2 — Open the window
 
 ```
-Unity menu → Window → UniPeek → Open 
+Unity menu → Window → UniPeek 
 ```
+
 ## Windows
 
 >On first launch on Windows, UniPeek will prompt for a one-time UAC elevation to add a Windows Firewall inbound rule for TCP port 7777.
@@ -106,6 +107,7 @@ Settings are persisted in `EditorPrefs` and restored on next launch.
 ## Message Protocol
 
 ### Outgoing (Unity → Phone)
+
 Every binary WebSocket message is one complete JPEG frame. No headers or framing.
 
 ### Incoming (Phone → Unity)
@@ -165,5 +167,5 @@ A best-effort reflection-based path is used to call Unity's internal `SimulateTo
 ## License
 
 UniPeek plugin source: **MIT**
-QRCoder: **MIT** (https://github.com/codebude/QRCoder)
-websocket-sharp: **MIT** (https://github.com/sta/websocket-sharp)
+QRCoder: **MIT** (<https://github.com/codebude/QRCoder>)
+websocket-sharp: **MIT** (<https://github.com/sta/websocket-sharp>)
