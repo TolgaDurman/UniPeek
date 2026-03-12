@@ -11,13 +11,12 @@ Stream the Unity Game View to the **UniPeek Flutter app** on your iOS or Android
 | Stream Game View as JPEG over WebSocket | ✅ | ✅ |
 | mDNS / DNS-SD auto-discovery | ✅ | ✅ |
 | QR code pairing | ✅ | ✅ |
-| Touch / gyro / accelerometer injection | ✅ | ✅ |
-| USB (ADB reverse) connection | ✅ | ✅ |
-| Reverse connection (Unity → phone) | ✅ | ✅ |
+| Touch Input | ✅ | ✅ |
+| Multi-Touch / gyro / accelerometer injection | - | ✅ |
+| USB (ADB reverse) connection | - | ✅ | (Coming Soon)
 | 540p + 720p streaming | ✅ | ✅ |
 | 1080p streaming | — | ✅ |
-| 60 fps cap | — | ✅ |
-| Multi-device (> 1 simultaneous client) | — | ✅ |
+| fps cap | ✅ | - |
 
 > **Note:** The plugin itself never enforces Pro limits — those are controlled by the companion app tier.
 
@@ -38,61 +37,33 @@ Requires **.NET Standard 2.1** API Compatibility Level (`Edit → Project Settin
 
 ## Installation
 
-### 1 — Copy the plugin
+### 1 — Install the plugin
 
-Drop the entire `Assets/Plugins/UniPeek/` folder into your Unity project.
+Install the plugin via Unity Asset Store or git
 
-```
-Assets/
-  Plugins/
-    UniPeek/
-      Editor/
-        UniPeek.Editor.asmdef   ← assembly definition
-        UniPeekEditor.cs
-        FrameCapture.cs
-        FrameEncoder.cs
-        WebSocketServer.cs
-        MdnsAdvertiser.cs
-        InputInjector.cs
-        ConnectionManager.cs
-        FirewallHelper.cs
-        QRCodeGenerator.cs
-      lib/
-        QRCoder.dll
-      Textures/
-        unipeek-logo.png
-```
-
-### 2 — Install websocket-sharp
-
-UniPeek requires **websocket-sharp-netstandard** for its WebSocket server.
-
-**Option A — NuGet (recommended):**
-Install `WebSocketSharp-netstandard` via [NuGet for Unity](https://github.com/GlitchEnzo/NuGetForUnity).
-
-**Option B — Manual:**
-Download `websocket-sharp.dll` and place it anywhere inside `Assets/` (e.g. `Assets/Packages/`).
-Make sure its `.meta` Plugin import settings are set to **Editor only**.
-
-### 3 — Open the window
+### 2 — Open the window
 
 ```
-Unity menu → Window → UniPeek
+Unity menu → Window → UniPeek → Open 
 ```
+## Windows
 
-On first launch on Windows, UniPeek will prompt for a one-time UAC elevation to add a Windows Firewall inbound rule for TCP port 7777.
+>On first launch on Windows, UniPeek will prompt for a one-time UAC elevation to add a Windows Firewall inbound rule for TCP port 7777.
+
+## MacOS & Linux
+
+>No additional permissions are required.
 
 ---
 
 ## Quick-start: Pairing via QR Code
 
 1. Open the **UniPeek** window (`Window → UniPeek`).
-2. Set **Resolution**, **Quality**, and **FPS Cap** as desired.
-3. Click **▶ Start Streaming**.
+2. Click **▶ Start Streaming**.
    A QR code appears showing the local IP and port.
-4. Open the **UniPeek** companion app on your phone.
-5. Tap **Scan QR** and point the camera at the QR code.
-6. The connection indicator in the Editor turns green; the phone now shows the live Game View.
+3. Open the **UniPeek** companion app on your phone.
+4. Tap **Scan QR** and point the camera at the QR code.
+5. The connection indicator in the Editor turns green; the phone now shows the live Game View.
 
 ---
 
@@ -105,7 +76,7 @@ Both the Unity host and the phone must be on the **same Wi-Fi network** (or the 
 
 ---
 
-## Quick-start: USB / ADB (Android)
+## Quick-start: USB / ADB (Android) | (Coming soon)
 
 1. Enable **USB Debugging** on your Android device.
 2. Connect via USB.
@@ -113,15 +84,6 @@ Both the Unity host and the phone must be on the **same Wi-Fi network** (or the 
    `adb reverse tcp:7777 tcp:7777`
    so the app can reach the editor even if they're on different networks.
 4. In the companion app, connect to `localhost:7777`.
-
----
-
-## Quick-start: Reverse Connection
-
-Use this when the phone **cannot reach** the host machine (e.g. corporate firewall, NAT).
-
-1. In the UniPeek app, switch to **Listen mode** (the phone acts as the WebSocket server on port 7778).
-2. In the Editor, start streaming, expand **Reverse Connection**, enter the phone's IP, and click **Connect to Phone**.
 
 ---
 
