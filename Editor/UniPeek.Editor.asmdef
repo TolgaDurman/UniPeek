@@ -28,7 +28,7 @@
         },
         {
             "name": "com.unity.webrtc",
-            "expression": "3.0.0",
+            "expression": "2.9.9",
             "define": "UNITY_WEBRTC"
         }
     ],
