@@ -14,7 +14,7 @@ Stream your Unity Game View live to your iOS or Android phone over Wi-Fi.
 
 ## Opening the UniPeek Window
 
-Go to **Window > UniPeek > Open** in the Unity menu bar.
+Go to **Window → UniPeek** in the Unity menu bar.
 
 The UniPeek window can be docked anywhere in your editor layout like any other Unity panel.
 
@@ -37,38 +37,41 @@ In the UniPeek app, tap **Browse** and your machine name will appear in the list
 
 No QR code needed. Both devices must be on the same subnet.
 
-### Option 3 — USB / ADB (Android only)
+### Option 3 — Reverse Connection (Android) — Under development
 
-1. Enable **USB Debugging** on your Android device.
-2. Connect it to your PC via USB cable.
-3. Click **Start Streaming** — UniPeek will set up port forwarding automatically.
-4. In the app, connect to **localhost** (no IP address needed).
+> This feature is currently under development and may not work in all builds.
 
-This works even without Wi-Fi and gives the lowest possible latency.
+Use this when your phone cannot reach your PC (hotel Wi-Fi, corporate network with client isolation).
 
-### Option 4 — Reverse Connection
-
-Use this when your phone cannot reach your PC (e.g. hotel Wi-Fi, corporate network with client isolation).
-
-1. In the UniPeek app, switch the app to **Listen** mode.
+1. In the UniPeek app, switch to **Listen** mode.
 2. In Unity, click **Start Streaming**, then expand the **Reverse Connection** section.
-3. Enter your phone's IP address and tap **Connect to Phone**.
+3. Enter your phone's IP address and click **Connect to Phone**.
+4. The editor dials out to the phone on port **7778**.
+
+### Option 4 — USB / ADB (Android only) — Coming soon
+
+Automatic ADB port forwarding is not yet built into the plugin. As a workaround, run the following command manually after connecting via USB, then connect the app to `localhost`:
+
+```sh
+adb reverse tcp:7777 tcp:7777
+```
 
 ---
 
 ## The Editor Window at a Glance
 
 | Area | What it does |
-|---|---|
+| --- | --- |
 | Status dot | Grey = stopped, Amber = waiting for phone, Green = connected |
 | **Start / Stop Streaming** button | Starts or stops the stream |
 | QR code | Appears while waiting; disappears once connected |
-| Stats bar | Shows live FPS and encode time (or WebRTC RTT when using Pro) |
-| **Options** section | Editor name, Play Mode lock, capture method |
+| Stats bar | Shows live FPS and encode time (WebRTC mode shows RTT instead) |
+| **Options** section | Editor name, socket mode, play mode behaviour, capture method, log level |
 | **Connected Devices** list | Shows all currently connected phones |
 | **Reverse Connection** panel | Manual outbound connection to a phone in Listen mode |
 | **Docs** button | Opens this manual online |
 | **Reset FW** button | Re-runs Windows Firewall setup if connections are failing |
+| **Port** field | Configurable listen port (default 7777); editable only when not streaming |
 
 ---
 
@@ -79,37 +82,61 @@ Use this when your phone cannot reach your PC (e.g. hotel Wi-Fi, corporate netwo
 Sets the display name shown in the UniPeek app's device list. Defaults to your machine name.
 Type a name and click **Set** to save it.
 
-### Only Run in Play Mode
+### Socket Mode
+
+Selects the streaming transport:
+
+| Mode | Description |
+| --- | --- |
+| **WebSocket** | JPEG frames sent as binary WebSocket messages. Works on all setups. |
+| **WebRTC** | Low-latency peer-to-peer video. Requires `com.unity.webrtc` ≥ 3.0.0 in your project. |
+
+The WebRTC option only appears if the `com.unity.webrtc` package is installed.
+
+### Run in Play Mode
 
 When **on**: streaming only runs while the Editor is in Play Mode. Entering Edit Mode automatically stops streaming.
 
-When **off**: streaming runs all the time, even in Edit Mode. Handy for inspecting the editor camera without entering Play. Note that script recompilation will briefly disconnect the stream.
+When **off**: streaming runs all the time, even in Edit Mode. The stream will briefly drop when scripts recompile (domain reload). Useful for inspecting the editor camera without entering Play.
 
 ### Capture Method
 
 | Method | Description |
-|---|---|
-| **Camera Render** | Renders the main camera directly. Works in Edit and Play Mode. |
-| **Async GPU Readback** | Same render path but non-blocking — reduces CPU stall at the cost of ~1 frame extra latency. |
+| --- | --- |
+| **Camera Render** | Renders the main camera synchronously. Works in Edit and Play Mode. |
+| **Async GPU Readback** | Same render path but non-blocking — reduces CPU stall at the cost of ~1 frame of extra latency. |
 
 Switch between them at any time; the change takes effect on the next captured frame.
+
+### Log Level
+
+Controls how much UniPeek writes to the Unity Console:
+
+| Level | Output |
+| --- | --- |
+| **None** | Completely silent |
+| **Error** | Errors only |
+| **Warning** | Errors and warnings |
+| **All** | Full diagnostic output |
 
 ---
 
 ## Touch Input
 
-When the phone sends a touch, UniPeek delivers it through **two independent channels** that can be used together or separately:
+Touch injection requires `com.unity.inputsystem`. The Legacy Input Manager alone is **not supported**. UniPeek delivers touches through two channels:
 
-| Channel | Class / API | Works with |
-|---|---|---|
-| **UniPeekInput events** | `UniPeekInput.OnTouch` / `OnTouchDetailed` | Both input systems |
+| Channel | Class / API | Requirement |
+| --- | --- | --- |
+| **UniPeekInput events** | `UniPeekInput.OnTouch` / `OnTouchDetailed` | New Input System (or Both) |
 | **Unity Input System** | `ETouch.activeTouches`, `Touchscreen.current`, etc. | New Input System only |
 
 Touch overlays (semi-transparent circles) are drawn on the Game View automatically while touches are active.
 
-### UniPeekInput (works with both input systems)
+> **Multi-touch, gyroscope, and accelerometer** are **Pro** features. Free tier receives single touch only.
 
-`UniPeekInput` is a lightweight static event bus. UniPeek fires its events on the main thread for every touch that arrives from the phone, regardless of which Unity input system is active.
+### UniPeekInput
+
+`UniPeekInput` is a lightweight static event bus. UniPeek fires its events on the main thread for every touch that arrives from the phone.
 
 ```csharp
 using UniPeek;
@@ -145,7 +172,6 @@ UniPeekInput.OnTouchDetailed += (fingerId, phase, normalizedPos) =>
 
 #### When to use UniPeekInput
 
-- You are using the **old (Legacy) Input Manager** — this is the only reliable touch API in that case.
 - You want a simple callback without dealing with the Input System device layer.
 - You need to react to individual touch events (e.g. "tap began") rather than polling state every frame.
 
@@ -260,35 +286,38 @@ void Update()
 
 ### Touch Input quick reference
 
-| What you want | Recommended API |
-|---|---|
-| Simple tap callback | `UniPeekInput.OnTouch` |
-| Phase + finger ID | `UniPeekInput.OnTouchDetailed` |
-| Single-touch polling | `Touchscreen.current.primaryTouch` |
-| Multi-touch / pinch | `ETouch.activeTouches` (Enhanced Touch) |
-| Old Input Manager support | `UniPeekInput` events (only reliable option) |
+| What you want | Recommended API | Tier |
+| --- | --- | --- |
+| Simple tap callback | `UniPeekInput.OnTouch` | Free + Pro |
+| Phase + finger ID | `UniPeekInput.OnTouchDetailed` | Free + Pro |
+| Single-touch polling | `Touchscreen.current.primaryTouch` | Free + Pro |
+| Multi-touch / pinch | `ETouch.activeTouches` (Enhanced Touch) | Pro |
 
 ---
 
 ## Gyroscope and Accelerometer
 
-The phone continuously sends gyroscope (rotation rate) and accelerometer (gravity + motion) data to Unity. This is injected as virtual sensor devices — your game code reads `Input.gyro` or the new Input System's `AttitudeSensor` and `Accelerometer` devices as normal.
+The phone continuously sends gyroscope (rotation rate) and accelerometer (gravity + motion) data to Unity. These are **Pro** features. When `com.unity.inputsystem` is installed, they are injected as virtual sensor devices — your game code reads them as normal.
 
 ### Accelerometer
 
 ```csharp
-// New Input System
+// New Input System (required)
 var accel = Accelerometer.current;
 if (accel != null)
     Vector3 g = accel.acceleration.ReadValue();
-
-// Legacy
-Vector3 g = Input.acceleration;
 ```
 
 ### Gyroscope
 
-Gyroscope data from the phone is currently forwarded via `UniPeekInput` only (the new Input System gyro stub is not yet fully integrated). Legacy `Input.gyro` injection is not supported by Unity's public API.
+```csharp
+// New Input System — rotation rate via AttitudeSensor
+var attitude = AttitudeSensor.current;
+if (attitude != null)
+    Quaternion rot = attitude.attitude.ReadValue();
+```
+
+> Legacy `Input.gyro` injection is not supported by Unity's public API. Use the new Input System for gyroscope data.
 
 ---
 
@@ -306,33 +335,25 @@ New-NetFirewallRule -DisplayName "UniPeek" -Direction Inbound -Action Allow -Pro
 
 ---
 
-## Free vs. Pro
-
-The plugin itself has no limits. Streaming quality is controlled by the companion app tier.
-
-| Feature | Free App | Pro App |
-|---|---|---|
-| 540p + 720p | Yes | Yes |
-| 1080p | — | Yes |
-| 60 fps cap | — | Yes |
-| More than 1 device at once | — | Yes |
-
----
-
 ## Troubleshooting
 
 | Symptom | Fix |
-|---|---|
+| --- | --- |
 | QR code shows `127.0.0.1` | Your machine has no active Wi-Fi or Ethernet. Connect to the network first. |
-| Phone can't find the host via Browse | Both must be on the same subnet. Some guest/corporate Wi-Fi blocks device-to-device traffic — try the QR or USB method instead. |
+| Phone can't find the host via Browse | Both must be on the same subnet. Some guest/corporate Wi-Fi blocks device-to-device traffic — try the QR code or Reverse Connection mode instead. |
 | Firewall prompt never appeared / connections fail | Click **Reset FW** in the toolbar, then **Start Streaming** again. |
-| Stream is black or frozen | Make sure there is at least one camera in your scene. In Edit Mode, Camera.main must exist. |
-| Touch events are not registering in UI | Enable the **Input System** package (`com.unity.inputsystem`) for reliable injection. |
-| High latency or choppy video | Lower the quality setting in the app, or reduce resolution to 540p. |
-| Stream drops on recompile | Enable **Only Run in Play Mode** to avoid interruptions from domain reloads. |
+| Stream is black or frozen | Make sure there is at least one camera tagged `MainCamera` in your scene. In Edit Mode, `Camera.main` must exist. |
+| Touch events are not registering | Enable the **Input System** package (`com.unity.inputsystem`) for reliable injection. |
+| Touch works but UI / Canvas buttons don't respond | Your Canvas is still using the old **Standalone Input Module**. Select the **EventSystem** in your scene and replace the Standalone Input Module component with **Input System UI Input Module** (`UnityEngine.InputSystem.UI.InputSystemUIInputModule`). |
+| High latency or choppy video | Lower the quality setting in the app, switch to **Async GPU Readback**, or reduce resolution to 540p. |
+| Stream drops on recompile | Disable **Run in Play Mode** to allow the stream to persist across domain reloads. |
+| WebRTC mode not available | Install `com.unity.webrtc` ≥ 3.0.0. The Socket Mode dropdown will show the WebRTC option once the package is detected. |
 
 ---
 
-## Default Port
+## Default Ports
 
-UniPeek listens on TCP port **7777**. Reverse connections use port **7778** (phone-side).
+| Port | Purpose |
+| --- | --- |
+| **7777** | UniPeek WebSocket server (phone → editor, configurable) |
+| **7778** | Reverse connection (editor → phone in Listen mode, fixed) |

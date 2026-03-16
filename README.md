@@ -1,22 +1,28 @@
 # UniPeek — Unity Editor Plugin
 
-Stream the Unity Game View to the **UniPeek Flutter app** on your iOS or Android device in real-time over a local Wi-Fi network.
+Stream the Unity Game View to the **UniPeek app** on your iOS or Android device in real-time over a local Wi-Fi network.
 
 ---
 
 ## Features
 
 | Feature | Free | Pro (via app) |
-|---|---|---|
+| --- | --- | --- |
 | Stream Game View as JPEG over WebSocket | ✅ | ✅ |
+| WebRTC low-latency streaming | ✅ | ✅ |
 | mDNS / DNS-SD auto-discovery | ✅ | ✅ |
 | QR code pairing | ✅ | ✅ |
-| Touch Input | ✅ | ✅ |
-| Multi-Touch / gyro / accelerometer injection | - | ✅ |
-| USB (ADB reverse) connection | - | ✅ | (Coming Soon)
+| Single touch input | ✅ | ✅ |
+| Touch gizmo overlay (Game View circles) | ✅ | ✅ |
+| Multi-touch injection | — | ✅ |
+| Gyroscope / accelerometer injection | — | ✅ |
+| Reverse connection (Android, no USB) | — | — *(Under development)* |
+| USB / ADB port forwarding | — | — *(Coming soon)* |
 | 540p + 720p streaming | ✅ | ✅ |
 | 1080p streaming | — | ✅ |
-| fps cap | ✅ | - |
+| 30 fps cap | ✅ | ✅ |
+| 60 fps cap | — | ✅ |
+| Multiple connected devices | — | ✅ |
 
 > **Note:** The plugin itself never enforces Pro limits — those are controlled by the companion app tier.
 
@@ -25,7 +31,7 @@ Stream the Unity Game View to the **UniPeek Flutter app** on your iOS or Android
 ## Unity Version Requirements
 
 | Unity | Status |
-|---|---|
+| --- | --- |
 | 2021 LTS (2021.3.x) | ✅ Supported |
 | 2022 LTS (2022.3.x) | ✅ Supported |
 | Unity 6 (6000.x) | ✅ Supported |
@@ -33,27 +39,35 @@ Stream the Unity Game View to the **UniPeek Flutter app** on your iOS or Android
 
 Requires **.NET Standard 2.1** API Compatibility Level (`Edit → Project Settings → Player → Other Settings → Api Compatibility Level`).
 
+**Required for input injection:**
+
+- `com.unity.inputsystem` — must be installed for any touch, multi-touch, gyroscope, or accelerometer injection. The Legacy Input Manager alone is **not supported**.
+
+**Optional:**
+
+- `com.unity.webrtc` ≥ 3.0.0 — enables WebRTC streaming mode.
+
 ---
 
 ## Installation
 
 ### 1 — Install the plugin
 
-Install the plugin via Unity Asset Store or git
+Install via the Unity Asset Store or git.
 
 ### 2 — Open the window
 
-```
-Unity menu → Window → UniPeek 
+```text
+Unity menu → Window → UniPeek
 ```
 
 ## Windows
 
->On first launch on Windows, UniPeek will prompt for a one-time UAC elevation to add a Windows Firewall inbound rule for TCP port 7777.
+> On first launch on Windows, UniPeek will prompt for a one-time UAC elevation to add a Windows Firewall inbound rule for TCP port 7777.
 
-## MacOS & Linux
+## macOS & Linux
 
->No additional permissions are required.
+> No additional permissions are required.
 
 ---
 
@@ -77,28 +91,41 @@ Both the Unity host and the phone must be on the **same Wi-Fi network** (or the 
 
 ---
 
-## Quick-start: USB / ADB (Android) | (Coming soon)
+## Quick-start: Reverse Connection (Android) — Under development
 
-1. Enable **USB Debugging** on your Android device.
-2. Connect via USB.
-3. Click **▶ Start Streaming** — UniPeek automatically runs
-   `adb reverse tcp:7777 tcp:7777`
-   so the app can reach the editor even if they're on different networks.
-4. In the companion app, connect to `localhost:7777`.
+> This feature is currently under development and may not work in all builds.
+
+Use this when your phone cannot reach the PC (hotel Wi-Fi, corporate networks with client isolation, no shared Wi-Fi):
+
+1. In the UniPeek app, switch to **Listen** mode.
+2. In Unity, click **▶ Start Streaming**, then expand the **Reverse Connection** panel.
+3. Enter your phone's IP address and click **Connect to Phone**.
+4. The editor dials out to the phone on port **7778**.
+
+---
+
+## Quick-start: USB / ADB (Android) — Coming soon
+
+Automatic ADB port forwarding is not yet implemented. In the meantime use the **Reverse Connection** mode above, or set up port forwarding manually:
+
+```sh
+adb reverse tcp:7777 tcp:7777
+```
+
+Then connect the app to `localhost:7777`.
 
 ---
 
 ## Settings Reference
 
 | Setting | Options | Description |
-|---|---|---|
-| **Resolution** | 540p / 720p / 1080p* | Streaming resolution sent to the phone |
-| **Quality** | Performance (50) / Balanced (75) / Quality (85) / Ultra (92) | JPEG compression quality |
-| **FPS Cap** | 10 / 20 / 30 / 60* | Maximum capture + encode rate |
-| **Stop on Play Mode** | On / Off | Auto-stops streaming when you enter Play Mode |
-| **Stop on Focus Loss** | On / Off | Auto-stops when the Game View loses focus |
-
-\* Pro tier required.
+| --- | --- | --- |
+| **Editor Name** | Text field | Display name shown in the app's device list. Defaults to the machine name. |
+| **Socket Mode** | WebSocket / WebRTC | Transport layer. WebRTC requires `com.unity.webrtc` ≥ 3.0.0. |
+| **Run in Play Mode** | On / Off | **On:** streaming only runs while the Editor is in Play Mode. **Off:** streaming runs in both Edit and Play Mode (stream will briefly drop on domain reloads). |
+| **Capture Method** | Camera Render / Async GPU Readback | Camera Render is synchronous. Async GPU Readback reduces main-thread stall at the cost of ~1 frame of extra latency. |
+| **Log Level** | None / Error / Warning / All | Console verbosity for UniPeek diagnostic messages. |
+| **Port** | Integer (default 7777) | TCP port the WebSocket server listens on. Only editable when not streaming. |
 
 Settings are persisted in `EditorPrefs` and restored on next launch.
 
@@ -108,42 +135,59 @@ Settings are persisted in `EditorPrefs` and restored on next launch.
 
 ### Outgoing (Unity → Phone)
 
-Every binary WebSocket message is one complete JPEG frame. No headers or framing.
+**Binary frames:** Each binary WebSocket message is one complete JPEG frame. No headers or framing.
+
+**Text messages (JSON):**
+
+```json
+{ "type": "playmode",  "playing": true }
+{ "type": "shutdown" }
+{ "type": "offer",     "sdp": "v=0\r\n..." }
+```
 
 ### Incoming (Phone → Unity)
 
 ```json
-{ "type": "config", "resolution": "1280x720", "quality": 75, "fps": 30 }
-{ "type": "touch",  "phase": "began", "x": 0.47, "y": 0.63, "fingerId": 0 }
-{ "type": "gyro",   "x": 0.1, "y": -0.3, "z": 0.05 }
-{ "type": "accel",  "x": 0.0, "y": 0.9,  "z": 0.1  }
+{ "type": "hello",     "client": "flutter", "tier": "free", "deviceName": "iPhone 15 Pro" }
+{ "type": "config",    "resolution": "1280x720", "quality": 75, "fps": 30, "landscape": false }
+{ "type": "touch",     "phase": "began", "x": 0.47, "y": 0.63, "fingerId": 0 }
+{ "type": "gyro",      "x": 0.1, "y": -0.3, "z": 0.05 }
+{ "type": "accel",     "x": 0.0, "y": 0.9,  "z": 0.1  }
+{ "type": "ping",      "ts": 1234567890 }
+{ "type": "answer",    "sdp": "v=0\r\n..." }
+{ "type": "candidate", "candidate": "...", "sdpMid": "0", "sdpMLineIndex": 0 }
 ```
 
 Touch `x`/`y` are normalised [0, 1]; `x=0` is the left edge, `y=0` is the **top** edge of the phone screen.
+`gyro` values are in rad/s; `accel` values are in g-force (Y ≈ 1.0 when the phone lies flat).
 
 ---
 
 ## Input Injection
 
-### New Input System (recommended)
+### New Input System (required)
 
-When the **Input System** package is installed, UniPeek creates virtual `Touchscreen` and `Accelerometer` devices and injects events via `InputSystem.QueueStateEvent`.
+Input injection requires `com.unity.inputsystem`. UniPeek creates virtual devices and injects events via `InputSystem.QueueStateEvent`:
+
+- `Touchscreen` — single and multi-touch from the phone (multi-touch requires Pro)
+- `Accelerometer` — gravity + motion data (Pro)
+- `AttitudeSensor` — gyroscope / rotation-rate data (Pro)
 
 Ensure you have `com.unity.inputsystem` in your `Packages/manifest.json`.
 
 ### Legacy Input Manager
 
-A best-effort reflection-based path is used to call Unity's internal `SimulateTouch`. This may not work across all Unity versions; switch to the new Input System for reliable injection.
+The Legacy Input Manager alone is **not supported**. Input injection requires the new Input System to be active (either as the only active backend, or alongside Legacy via the *Both* setting in Player Settings).
 
 ---
 
 ## Performance Notes
 
 | Resolution | Expected FPS |
-|---|---|
-| 540p | 60 fps stable |
-| 720p | 50 – 60 fps |
-| 1080p | 30 – 45 fps |
+| --- | --- |
+| 540p | >60 fps stable |
+| 720p | 40 – 60 fps |
+| 1080p | 30 – 40 fps |
 
 - **Main-thread budget:** < 2 ms per frame (capture + blit only).
 - **JPEG encoding** runs entirely on a background thread via `Task.Run()`.
@@ -154,13 +198,15 @@ A best-effort reflection-based path is used to call Unity's internal `SimulateTo
 ## Troubleshooting
 
 | Problem | Solution |
-|---|---|
+| --- | --- |
 | QR code shows `127.0.0.1` | Machine has no active Wi-Fi / Ethernet. Connect to the network first. |
-| Phone can't find host via mDNS | Make sure both are on the same subnet. Some corporate Wi-Fi isolates clients. |
+| Phone can't find host via mDNS | Make sure both are on the same subnet. Some corporate Wi-Fi isolates clients — try the QR code or Reverse Connection mode instead. |
 | Firewall rule prompt never appears | Click **Reset FW** in the UniPeek toolbar, then Start Streaming again. |
-| Game View is black / null capture | Open a **Game** tab in the Editor and make sure it's visible (not behind other panels). |
-| `websocket-sharp.dll` not found | Place the DLL inside `Assets/` and re-import. Check the Plugin import settings. |
-| High encode latency | Lower Quality to Performance (50) or reduce Resolution. |
+| Game View is black / null capture | Open a **Game** tab in the Editor and make sure it is visible (not behind other panels). In Edit Mode, ensure a camera tagged `MainCamera` exists. |
+| Touch events not registering | Enable the **Input System** package (`com.unity.inputsystem`) for reliable injection. |
+| High encode latency | Switch Capture Method to **Async GPU Readback**, lower Quality, or reduce Resolution. |
+| Stream drops on recompile | Disable **Run in Play Mode** so the stream persists across domain reloads. |
+| WebRTC offer/answer hangs | Ensure `com.unity.webrtc` ≥ 3.0.0 is installed. Fall back to WebSocket mode if WebRTC is unavailable. |
 
 ---
 
