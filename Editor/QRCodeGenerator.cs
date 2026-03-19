@@ -1,6 +1,4 @@
 using System;
-using System.Net;
-using System.Net.Sockets;
 using UnityEditor;
 using UnityEngine;
 using QRCoder;
@@ -52,29 +50,14 @@ namespace UniPeek
         }
 
         /// <summary>
-        /// Returns the local IPv4 address that will be embedded in the QR payload,
-        /// or <c>"127.0.0.1"</c> if no suitable address is found.
+        /// Returns the local IPv4 address that will be embedded in the QR payload.
+        /// Respects the user's manual interface override (saved via <see cref="NetworkInterfaceSelector"/>);
+        /// falls back to smart auto-selection that prefers physical Ethernet/Wi-Fi interfaces and
+        /// skips virtual adapters (VMware, Hyper-V, VirtualBox, VPN tunnels, etc.).
+        /// Returns <c>"127.0.0.1"</c> if no suitable address is found.
         /// </summary>
         public static string GetLocalIPv4()
-        {
-            try
-            {
-                string host = Dns.GetHostName();
-                foreach (IPAddress addr in Dns.GetHostEntry(host).AddressList)
-                {
-                    if (addr.AddressFamily == AddressFamily.InterNetwork &&
-                        !IPAddress.IsLoopback(addr))
-                    {
-                        return addr.ToString();
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                UniPeekConstants.LogWarning($"Could not determine local IP: {ex.Message}");
-            }
-            return "127.0.0.1";
-        }
+            => NetworkInterfaceSelector.GetEffectiveIP();
 
         /// <summary>
         /// Destroys the cached QR <see cref="Texture2D"/> and resets the IP cache,

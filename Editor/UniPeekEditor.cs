@@ -43,15 +43,17 @@ namespace UniPeek
         // ── Port ──────────────────────────────────────────────────────────────
         private int _port = UniPeekConstants.DefaultPort;
 
-        // ── Reverse-connection UI ─────────────────────────────────────────────
-        private string  _reverseIp        = string.Empty;
-        private bool    _showReversePanel;
+        // ── Network interface selection ───────────────────────────────────────
+        private int      _nicIndex;            // 0 = Auto, 1..n = specific interface
+        private string[] _nicLabels = System.Array.Empty<string>();
+        private string[] _nicIPs    = System.Array.Empty<string>();
+
+        // ── Scroll ────────────────────────────────────────────────────────────
         private Vector2 _scrollPos;
 
         // ── Colors ────────────────────────────────────────────────────────────
         private static readonly Color ColGreen = new(0.18f, 0.80f, 0.32f);
         private static readonly Color ColAmber = new(1.00f, 0.72f, 0.00f);
-        private static readonly Color ColBlue  = new(0.28f, 0.58f, 1.00f);
         private static readonly Color ColGrey  = new(0.45f, 0.45f, 0.45f);
 
         // ─────────────────────────────────────────────────────────────────────
@@ -76,6 +78,7 @@ namespace UniPeek
         private void OnEnable()
         {
             LoadPrefs();
+            RefreshNetworkInterfaces();
             SubscribeToManager();
 
             _logoTexture = AssetDatabase.LoadAssetAtPath<Texture2D>(
@@ -107,6 +110,7 @@ namespace UniPeek
 
         private void OnFocus()
         {
+            RefreshNetworkInterfaces();
             if (_streaming) RefreshQR();
         }
 
@@ -163,7 +167,6 @@ namespace UniPeek
             GUILayout.Space(8f);
 
             DrawDeviceList();
-            DrawReverseConnectionPanel();
 
             GUILayout.FlexibleSpace();
             DrawFooter();
@@ -207,11 +210,6 @@ namespace UniPeek
                     int n    = mgr.ConnectedDevices.Count;
                     primaryText   = n == 1 ? mgr.ConnectedDevices[0].DeviceName : $"{n} devices";
                     secondaryText = "Connected";
-                    break;
-                case ConnectionState.ReverseConnecting:
-                    dotColor      = ColBlue;
-                    primaryText   = "Connecting…";
-                    secondaryText = "Reverse mode";
                     break;
                 default:
                     dotColor    = ColGrey;
@@ -376,6 +374,9 @@ namespace UniPeek
             }
 
             GUILayout.Space(4f);
+            DrawNetworkInterfaceDropdown();
+
+            GUILayout.Space(4f);
             var mgr = ConnectionManager.Instance;
             EditorGUI.BeginChangeCheck();
             var newMethod = (CaptureMethod)EditorGUILayout.EnumPopup("Capture Method", mgr.ActiveCaptureMethod);
@@ -394,6 +395,65 @@ namespace UniPeek
                         "Camera.Render() → AsyncGPUReadback. Non-blocking, ~1 frame extra latency.",
                         MessageType.None);
                     break;
+            }
+        }
+
+        // ── Network interface dropdown ────────────────────────────────────────
+
+        private void RefreshNetworkInterfaces()
+        {
+            var candidates = NetworkInterfaceSelector.GetCandidates();
+
+            _nicLabels    = new string[candidates.Count + 1];
+            _nicIPs       = new string[candidates.Count];
+            _nicLabels[0] = "Auto (best match)";
+
+            for (int i = 0; i < candidates.Count; i++)
+            {
+                _nicLabels[i + 1] = candidates[i].Label;
+                _nicIPs[i]        = candidates[i].IP;
+            }
+
+            // Restore saved selection (reset to Auto if the saved IP is no longer present).
+            string savedIP = NetworkInterfaceSelector.GetSavedIP();
+            _nicIndex = 0;
+            if (!string.IsNullOrEmpty(savedIP))
+            {
+                for (int i = 0; i < _nicIPs.Length; i++)
+                {
+                    if (_nicIPs[i] == savedIP)
+                    {
+                        _nicIndex = i + 1;
+                        break;
+                    }
+                }
+            }
+        }
+
+        private void DrawNetworkInterfaceDropdown()
+        {
+            EditorGUI.BeginChangeCheck();
+            _nicIndex = EditorGUILayout.Popup("Network Interface", _nicIndex, _nicLabels);
+            if (EditorGUI.EndChangeCheck())
+            {
+                string selectedIP = _nicIndex == 0 ? string.Empty : _nicIPs[_nicIndex - 1];
+                NetworkInterfaceSelector.SaveIP(selectedIP);
+                QRCodeGenerator.Invalidate();
+
+                // Apply immediately: restart streaming with the new binding IP.
+                if (_streaming)
+                {
+                    StopStreaming();
+                    DoStartStreaming();
+                }
+            }
+
+            if (_nicIndex == 0)
+            {
+                string bestIp = NetworkInterfaceSelector.GetBestIP();
+                EditorGUILayout.HelpBox(
+                    $"Auto-selected: {bestIp}  —  Change this if UniPeek advertises a virtual adapter address.",
+                    MessageType.None);
             }
         }
 
@@ -422,32 +482,6 @@ namespace UniPeek
             GUILayout.Space(8f);
         }
 
-        // ── Reverse connection ────────────────────────────────────────────────
-
-        private void DrawReverseConnectionPanel()
-        {
-            _showReversePanel = EditorGUILayout.Foldout(
-                _showReversePanel, "Reverse Connection (Android Only)", toggleOnLabelClick: true);
-
-            if (!_showReversePanel) return;
-
-            using var indent = new EditorGUI.IndentLevelScope();
-            _reverseIp = EditorGUILayout.TextField("Phone IP", _reverseIp);
-
-            using (new EditorGUI.DisabledGroupScope(
-                !_streaming || string.IsNullOrWhiteSpace(_reverseIp)))
-            {
-                if (GUILayout.Button("Connect to Phone"))
-                    ConnectionManager.Instance.ConnectReverse(_reverseIp);
-            }
-
-            EditorGUILayout.HelpBox(
-                "Use when the phone can't reach this machine (e.g. strict firewall). " +
-                "The app must be in 'Listen' mode.",
-                MessageType.Info);
-
-            GUILayout.Space(6f);
-        }
 
         // ── Footer ────────────────────────────────────────────────────────────
 
