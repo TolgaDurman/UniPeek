@@ -52,7 +52,7 @@ Requires **.NET Standard 2.1** API Compatibility Level (`Edit → Project Settin
 
 ### 1 — Install the plugin
 
-Install via the Unity Asset Store or git.
+Download the latest `.unitypackage` from the [Releases page](https://github.com/TolgaDurman/UniPeek/releases/latest) and import it into your project via **Assets → Import Package → Custom Package**.
 
 ### 2 — Open the window
 
