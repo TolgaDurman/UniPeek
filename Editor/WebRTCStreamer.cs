@@ -56,6 +56,7 @@ namespace UniPeek
         // ── WebRTC objects ────────────────────────────────────────────────────
         private RTCPeerConnection _pc;
         private VideoStreamTrack  _videoTrack;
+        private AudioStreamTrack  _audioTrack;
         private MediaStream       _mediaStream;
         private RTCDataChannel    _dataChannel;
 
@@ -122,6 +123,25 @@ namespace UniPeek
             _mediaStream.AddTrack(_videoTrack);
             _pc.AddTrack(_videoTrack, _mediaStream);
 
+            // ── Audio track ────────────────────────────────────────────────────
+            try
+            {
+                var listener = UnityEngine.Object.FindObjectOfType<AudioListener>();
+                if (listener != null)
+                {
+                    _audioTrack = new AudioStreamTrack(listener);
+                    _mediaStream.AddTrack(_audioTrack);
+                    _pc.AddTrack(_audioTrack, _mediaStream);
+                    UniPeekConstants.Log("[WebRTC] Audio track added.");
+                }
+                else
+                    UniPeekConstants.LogWarning("[WebRTC] No AudioListener found — audio not streamed.");
+            }
+            catch (Exception ex)
+            {
+                UniPeekConstants.LogWarning($"[WebRTC] Audio track setup failed, continuing without audio: {ex.Message}");
+            }
+
             // ── Data channel (input messages from Flutter) ────────────────────
             var dcInit = new RTCDataChannelInit { ordered = true };
             _dataChannel          = _pc.CreateDataChannel("input", dcInit);
@@ -174,6 +194,9 @@ namespace UniPeek
 
             _dataChannel?.Dispose();
             _dataChannel = null;
+
+            _audioTrack?.Dispose();
+            _audioTrack = null;
 
             _videoTrack?.Dispose();
             _videoTrack = null;
