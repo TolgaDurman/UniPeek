@@ -86,6 +86,9 @@ namespace UniPeek
         /// <summary>EditorPrefs key for the active <see cref="LogLevel"/>.</summary>
         public const string PrefLogLevel = "UniPeek_LogLevel";
 
+        /// <summary>EditorPrefs key for auto-starting streaming when entering Play Mode.</summary>
+        public const string PrefAutoStartOnPlay = "UniPeek_AutoStartOnPlay";
+
         // ── Runtime log level ─────────────────────────────────────────────────
         /// <summary>Active log verbosity. Set by the editor window; read by the log helpers below.</summary>
         public static LogLevel CurrentLogLevel { get; set; } = LogLevel.All;

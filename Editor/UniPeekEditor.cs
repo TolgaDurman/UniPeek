@@ -10,8 +10,13 @@ namespace UniPeek
     {
         // ── Persistent settings ───────────────────────────────────────────────
         private bool _requirePlayMode;
+        private bool _autoStartOnPlayMode;
         private SocketMode _socketMode;
         private LogLevel   _logLevel;
+
+        // Set when streaming was triggered automatically by entering Play Mode,
+        // so we know to auto-stop it on exit.
+        private bool _autoStartedByPlayMode;
 
         // Survives domain reloads; claimed with DeleteKey to prevent double-start.
         private const string PrefPendingStart = "UniPeek_PendingStart";
@@ -123,6 +128,13 @@ namespace UniPeek
                 return;
             }
 
+            if (state == PlayModeStateChange.EnteredPlayMode && _autoStartOnPlayMode && !_streaming)
+            {
+                DoStartStreaming();
+                _autoStartedByPlayMode = true;
+                return;
+            }
+
             if (state == PlayModeStateChange.EnteredPlayMode
                 && !_requirePlayMode && !_streaming
                 && EditorPrefs.GetBool(UniPeekConstants.PrefPersistStreaming, false))
@@ -131,8 +143,12 @@ namespace UniPeek
                 return;
             }
 
-            if (_requirePlayMode && _streaming && state == PlayModeStateChange.ExitingPlayMode)
+            if (_streaming && state == PlayModeStateChange.ExitingPlayMode
+                && (_requirePlayMode || _autoStartedByPlayMode))
+            {
+                _autoStartedByPlayMode = false;
                 StopStreaming();
+            }
         }
 
         // ─────────────────────────────────────────────────────────────────────
@@ -350,6 +366,22 @@ namespace UniPeek
                     "Recompiling will cut the connection. Pro users have automatic reconnect. " +
                     "Enabling 'Only run in Play Mode' avoids interruptions.",
                     MessageType.Info);
+            }
+
+            GUILayout.Space(4f);
+            EditorGUI.BeginChangeCheck();
+            var newAutoStart = EditorGUILayout.Toggle("Auto Start on Play Mode", _autoStartOnPlayMode);
+            if (EditorGUI.EndChangeCheck())
+            {
+                _autoStartOnPlayMode = newAutoStart;
+                SavePrefs();
+            }
+            if (_autoStartOnPlayMode)
+            {
+                GUILayout.Space(2f);
+                EditorGUILayout.HelpBox(
+                    "Streaming starts automatically when Play Mode begins and stops when it ends.",
+                    MessageType.None);
             }
 
             GUILayout.Space(4f);
@@ -610,9 +642,10 @@ namespace UniPeek
         {
             if (!_streaming) return;
             ConnectionManager.Instance.StopStreaming();
-            _streaming  = false;
-            _captureFps = 0f;
-            _encodeMs   = 0f;
+            _streaming             = false;
+            _autoStartedByPlayMode = false;
+            _captureFps            = 0f;
+            _encodeMs              = 0f;
             EditorPrefs.DeleteKey(UniPeekConstants.PrefPersistStreaming);
             DestroyQR();
             Repaint();
@@ -684,10 +717,11 @@ namespace UniPeek
 
         private void LoadPrefs()
         {
-            _requirePlayMode = EditorPrefs.GetBool(UniPeekConstants.PrefAutoStopPlay, true);
-            _socketMode      = (SocketMode)EditorPrefs.GetInt(UniPeekConstants.PrefSocketMode, (int)SocketMode.WebRTC);
-            _logLevel        = (LogLevel)EditorPrefs.GetInt(UniPeekConstants.PrefLogLevel, (int)LogLevel.All);
-            _port            = EditorPrefs.GetInt(UniPeekConstants.PrefPort, UniPeekConstants.DefaultPort);
+            _requirePlayMode     = EditorPrefs.GetBool(UniPeekConstants.PrefAutoStopPlay, true);
+            _autoStartOnPlayMode = EditorPrefs.GetBool(UniPeekConstants.PrefAutoStartOnPlay, false);
+            _socketMode          = (SocketMode)EditorPrefs.GetInt(UniPeekConstants.PrefSocketMode, (int)SocketMode.WebRTC);
+            _logLevel            = (LogLevel)EditorPrefs.GetInt(UniPeekConstants.PrefLogLevel, (int)LogLevel.All);
+            _port                = EditorPrefs.GetInt(UniPeekConstants.PrefPort, UniPeekConstants.DefaultPort);
             UniPeekConstants.CurrentLogLevel = _logLevel;
 
             // File takes priority — it's written synchronously so it's crash-safe.
@@ -700,6 +734,7 @@ namespace UniPeek
         private void SavePrefs()
         {
             EditorPrefs.SetBool(UniPeekConstants.PrefAutoStopPlay, _requirePlayMode);
+            EditorPrefs.SetBool(UniPeekConstants.PrefAutoStartOnPlay, _autoStartOnPlayMode);
             EditorPrefs.SetInt(UniPeekConstants.PrefSocketMode, (int)_socketMode);
             EditorPrefs.SetInt(UniPeekConstants.PrefLogLevel, (int)_logLevel);
             EditorPrefs.SetString(UniPeekConstants.PrefEditorName, _editorName);
