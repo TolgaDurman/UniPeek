@@ -20,6 +20,7 @@ import os
 import re
 import sys
 import tarfile
+import uuid
 
 # Directories to exclude from the package
 SKIP_DIRS = {'.git', '.github', '.vscode', '.idea', '__pycache__'}
@@ -42,6 +43,40 @@ def read_guid(meta_path: str) -> str | None:
     except OSError:
         pass
     return None
+
+
+# Stable GUID for the Assets/Plugins/UniPeek root folder itself.
+# This comes from Assets/Plugins/UniPeek.meta in the Unity project.
+# Unity's import tree view requires an entry for every folder in the path chain;
+# without this the PackageImportTreeView crashes with a NullReferenceException.
+ROOT_FOLDER_GUID = '1706633df7f3cea4e9c2cf8904dd9fd6'
+
+
+def _synthetic_folder_meta(guid: str) -> bytes:
+    """Minimal Unity folder .meta content for a directory with the given GUID."""
+    return (
+        f'fileFormatVersion: 2\n'
+        f'guid: {guid}\n'
+        f'folderAsset: yes\n'
+        f'DefaultImporter:\n'
+        f'  externalObjects: {{}}\n'
+        f'  userData: \n'
+        f'  assetBundleName: \n'
+        f'  assetBundleVariantName: \n'
+    ).encode('utf-8')
+
+
+def _add_folder_entry(tar: tarfile.TarFile, guid: str, unity_path: str,
+                      meta_bytes: bytes) -> None:
+    """Add a directory entry (pathname + asset.meta, no asset) to the archive."""
+    data = unity_path.encode('utf-8')
+    info = tarfile.TarInfo(f'{guid}/pathname')
+    info.size = len(data)
+    tar.addfile(info, io.BytesIO(data))
+
+    info = tarfile.TarInfo(f'{guid}/asset.meta')
+    info.size = len(meta_bytes)
+    tar.addfile(info, io.BytesIO(meta_bytes))
 
 
 def add_entry(
@@ -74,6 +109,13 @@ def build(repo_root: str, output_file: str, prefix: str) -> None:
 
     count = 0
     with tarfile.open(output_file, 'w:gz') as tar:
+        # The repo root maps to `prefix` (e.g. Assets/Plugins/UniPeek).
+        # Unity's import dialog builds a folder tree and requires an entry for
+        # every directory in the path chain — add the root one synthetically.
+        _add_folder_entry(tar, ROOT_FOLDER_GUID, prefix,
+                          _synthetic_folder_meta(ROOT_FOLDER_GUID))
+        count += 1
+
         for dirpath, dirnames, filenames in os.walk(repo_root):
             # Prune unwanted directories in-place so os.walk won't descend into them
             dirnames[:] = sorted(
