@@ -20,8 +20,7 @@ Stream the Unity Game View to the **UniPeek app** on your iOS or Android device 
 | USB / ADB port forwarding | — | — *(Coming soon)* |
 | 540p + 720p streaming | ✅ | ✅ |
 | 1080p streaming | — | ✅ |
-| 30 fps cap | ✅ | ✅ |
-| 60 fps cap | — | ✅ |
+| 20 fps cap | ✅ | - |
 | Multiple connected devices | — | ✅ |
 
 > **Note:** The plugin itself never enforces Pro limits — those are controlled by the companion app tier.
