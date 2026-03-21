@@ -36,7 +36,7 @@ jobs:
           EOF
 
           # Copy plugin files, excluding git and CI metadata
-          rsync -a --exclude='.git' --exclude='.github' . _project/Assets/Plugins/UniPeek/
+          rsync -a --exclude='.git' --exclude='.github' --exclude='_project' . _project/Assets/Plugins/UniPeek/
 
           # Build meta list: root folder meta first, then all metas inside the folder.
           # Paths must be relative to project-folder (_project/).
