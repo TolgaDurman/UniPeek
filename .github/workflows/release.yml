@@ -17,29 +17,43 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # The action requires files to live under a Unity project structure.
-      # Our repo root IS the plugin, so we stage it at Assets/Plugins/UniPeek/.
       - name: Stage plugin under Unity project structure
         run: |
           mkdir -p _project/Assets/Plugins/UniPeek
-          # Copy everything except the _project dir itself
-          find . -mindepth 1 -maxdepth 1 \
-            ! -name '_project' \
-            ! -name '.git' \
-            -exec cp -r {} _project/Assets/Plugins/UniPeek/ \;
-          # Generate the list of .meta files for the action
+
+          # The action needs Assets/Plugins/UniPeek.meta (the folder's own meta,
+          # which lives outside the plugin repo in the Unity project).
+          # We recreate it here using the real GUID from Assets/Plugins/UniPeek.meta.
+          cat > _project/Assets/Plugins/UniPeek.meta << 'EOF'
+          fileFormatVersion: 2
+          guid: 1706633df7f3cea4e9c2cf8904dd9fd6
+          folderAsset: yes
+          DefaultImporter:
+            externalObjects: {}
+            userData:
+            assetBundleName:
+            assetBundleVariantName:
+          EOF
+
+          # Copy plugin files, excluding git and CI metadata
+          rsync -a --exclude='.git' --exclude='.github' . _project/Assets/Plugins/UniPeek/
+
+          # Build meta list: root folder meta first, then all metas inside the folder.
+          # Paths must be relative to project-folder (_project/).
+          echo "Assets/Plugins/UniPeek.meta" > metaList
           find _project/Assets/Plugins/UniPeek -name "*.meta" \
             | sed 's|^_project/||' \
-            > meta_list.txt
-          echo "--- meta_list.txt ---"
-          cat meta_list.txt
+            | sort >> metaList
+
+          echo "=== Generated meta list ==="
+          cat metaList
 
       - name: Create .unitypackage
         uses: pCYSl5EDgo/create-unitypackage@master
         with:
           project-folder: _project
           package-path: UniPeek${{ github.ref_name }}.unitypackage
-          include-files: meta_list.txt
+          include-files: metaList
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
