@@ -11,26 +11,39 @@ jobs:
   build-and-release:
     runs-on: ubuntu-latest
     permissions:
-      contents: write   # needed to create GitHub releases
+      contents: write
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-
-      - name: Build .unitypackage
+      # The action requires files to live under a Unity project structure.
+      # Our repo root IS the plugin, so we stage it at Assets/Plugins/UniPeek/.
+      - name: Stage plugin under Unity project structure
         run: |
-          PACKAGE_NAME="UniPeek${GITHUB_REF_NAME}.unitypackage"
-          echo "PACKAGE_NAME=${PACKAGE_NAME}" >> $GITHUB_ENV
-          python3 .github/scripts/build_package.py . "${PACKAGE_NAME}"
+          mkdir -p _project/Assets/Plugins/UniPeek
+          # Copy everything except the _project dir itself
+          find . -mindepth 1 -maxdepth 1 \
+            ! -name '_project' \
+            ! -name '.git' \
+            -exec cp -r {} _project/Assets/Plugins/UniPeek/ \;
+          # Generate the list of .meta files for the action
+          find _project/Assets/Plugins/UniPeek -name "*.meta" \
+            | sed 's|^_project/||' \
+            > meta_list.txt
+          echo "--- meta_list.txt ---"
+          cat meta_list.txt
+
+      - name: Create .unitypackage
+        uses: pCYSl5EDgo/create-unitypackage@master
+        with:
+          project-folder: _project
+          package-path: UniPeek${{ github.ref_name }}.unitypackage
+          include-files: meta_list.txt
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           name: ${{ github.ref_name }}
-          files: ${{ env.PACKAGE_NAME }}
+          files: UniPeek${{ github.ref_name }}.unitypackage
           generate_release_notes: true
