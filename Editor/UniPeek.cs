@@ -89,6 +89,9 @@ namespace UniPeek
         /// <summary>EditorPrefs key for auto-starting streaming when entering Play Mode.</summary>
         public const string PrefAutoStartOnPlay = "UniPeek_AutoStartOnPlay";
 
+        /// <summary>EditorPrefs key for the show-touch-gizmos toggle.</summary>
+        public const string PrefShowTouchGizmos = "UniPeek_ShowTouchGizmos";
+
         // ── Runtime log level ─────────────────────────────────────────────────
         /// <summary>Active log verbosity. Set by the editor window; read by the log helpers below.</summary>
         public static LogLevel CurrentLogLevel { get; set; } = LogLevel.All;

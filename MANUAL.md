@@ -123,12 +123,25 @@ Controls how much UniPeek writes to the Unity Console:
 
 ## Touch Input
 
-Touch injection requires `com.unity.inputsystem`. The Legacy Input Manager alone is **not supported**. UniPeek delivers touches through two channels:
+UniPeek injects touch into **every active input backend** simultaneously:
 
-| Channel | Class / API | Requirement |
+| Backend | How it works | Reliability |
 | --- | --- | --- |
-| **UniPeekInput events** | `UniPeekInput.OnTouch` / `OnTouchDetailed` | New Input System (or Both) |
-| **Unity Input System** | `ETouch.activeTouches`, `Touchscreen.current`, etc. | New Input System only |
+| **New Input System** (`com.unity.inputsystem`) | Virtual `Touchscreen` device via `InputSystem.QueueStateEvent` | Fully supported |
+| **Legacy Input Manager** | Internal `Input.SimulateTouch(Touch)` via reflection | Best-effort — works on Unity 2021 – 2022 – 6; may break on future versions |
+
+The active backend is controlled by **Edit → Project Settings → Player → Active Input Handling**:
+
+- **Input System Package (New)** — only the new Input System path runs.
+- **Input Manager (Old)** — only the Legacy reflection path runs.
+- **Both** — UniPeek injects into both systems at the same time. This is the recommended setting when your project uses a mix of old and new Input APIs.
+
+UniPeek delivers touches through two additional channels regardless of backend:
+
+| Channel | Class / API |
+| --- | --- |
+| **UniPeekInput events** | `UniPeekInput.OnTouch` / `OnTouchDetailed` |
+| **Unity Input System polling** | `ETouch.activeTouches`, `Touchscreen.current`, etc. (requires new Input System) |
 
 Touch overlays (semi-transparent circles) are drawn on the Game View automatically while touches are active.
 
@@ -227,7 +240,7 @@ UniPeek's phone sends **normalised** coordinates where `(0, 0)` is the **top-lef
 
 UniPeek applies the conversion automatically before injecting into the Input System:
 
-```
+```text
 screenX = normalizedX × Screen.width
 screenY = (1 − normalizedY) × Screen.height   // Y-flip
 ```
@@ -343,7 +356,7 @@ New-NetFirewallRule -DisplayName "UniPeek" -Direction Inbound -Action Allow -Pro
 | Phone can't find the host via Browse | Both must be on the same subnet. Some guest/corporate Wi-Fi blocks device-to-device traffic — try the QR code or Reverse Connection mode instead. |
 | Firewall prompt never appeared / connections fail | Click **Reset FW** in the toolbar, then **Start Streaming** again. |
 | Stream is black or frozen | Make sure there is at least one camera tagged `MainCamera` in your scene. In Edit Mode, `Camera.main` must exist. |
-| Touch events are not registering | Enable the **Input System** package (`com.unity.inputsystem`) for reliable injection. |
+| Touch events are not registering | Check **Edit → Project Settings → Player → Active Input Handling**. If using Legacy only, UniPeek injects via reflection (best-effort). For reliable injection, install `com.unity.inputsystem` and set Active Input Handling to **Input System Package** or **Both**. |
 | Touch works but UI / Canvas buttons don't respond | Your Canvas is still using the old **Standalone Input Module**. Select the **EventSystem** in your scene and replace the Standalone Input Module component with **Input System UI Input Module** (`UnityEngine.InputSystem.UI.InputSystemUIInputModule`). |
 | High latency or choppy video | Lower the quality setting in the app, switch to **Async GPU Readback**, or reduce resolution to 540p. |
 | Stream drops on recompile | Disable **Run in Play Mode** to allow the stream to persist across domain reloads. |

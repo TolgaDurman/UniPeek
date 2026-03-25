@@ -229,6 +229,17 @@ namespace UniPeek
             SetState(ConnectionState.Advertising);
         }
 
+        /// <summary>
+        /// Sends a shutdown message to a single client and closes its connection.
+        /// All other clients remain connected and streaming continues.
+        /// </summary>
+        public void DisconnectDevice(string sessionId)
+        {
+            if (_wsServer == null || string.IsNullOrEmpty(sessionId)) return;
+            _wsServer.SendToSession(sessionId, "{\"type\":\"shutdown\"}");
+            _wsServer.CloseSession(sessionId);
+        }
+
         /// <summary>Stops all streaming, severs all connections, and releases resources.</summary>
         public void StopStreaming()
         {

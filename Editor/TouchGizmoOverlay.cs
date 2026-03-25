@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using UnityEditor;
 using UnityEngine;
+using UnityEngine.Rendering;
 
 namespace UniPeek
 {
@@ -21,15 +22,27 @@ namespace UniPeek
         private static readonly Dictionary<int, TouchPoint> _touches = new();
         private static Material _mat;
 
+        /// <summary>
+        /// Whether touch gizmos are drawn on the Game View.
+        /// Persisted per-project via <see cref="EditorPrefs"/>.
+        /// </summary>
+        internal static bool ShowGizmos
+        {
+            get => EditorPrefs.GetBool(UniPeekConstants.PrefShowTouchGizmos, true);
+            set => EditorPrefs.SetBool(UniPeekConstants.PrefShowTouchGizmos, value);
+        }
+
         // How long (seconds) to keep showing a touch after the last "moved" before
         // auto-removing it (safety net in case "ended" is dropped by the network).
         private const double StaleTimeout = 2.0;
 
         static TouchGizmoOverlay()
         {
-            UniPeekInput.OnTouchDetailed += OnTouchDetailed;
-            Camera.onPostRender          += OnPostRender;
-            EditorApplication.update     += OnEditorUpdate;
+            UniPeekInput.OnTouchDetailed             += OnTouchDetailed;
+            Camera.onPostRender                      += OnBuiltInPostRender;   // Built-in RP
+            RenderPipelineManager.endCameraRendering += OnSrpCameraRendering;  // URP/HDRP — scene view
+            RenderPipelineManager.endFrameRendering  += OnSrpEndFrame;         // URP/HDRP — game view
+            EditorApplication.update                 += OnEditorUpdate;
         }
 
         // ── Touch tracking ────────────────────────────────────────────────────
@@ -68,10 +81,34 @@ namespace UniPeek
                 UnityEditorInternal.InternalEditorUtility.RepaintAllViews();
         }
 
+        // ── Render callbacks ──────────────────────────────────────────────────
+
+        // Built-in RP: fires per-camera after it renders.
+        private static void OnBuiltInPostRender(Camera cam)
+        {
+            if (cam.cameraType != CameraType.Game && cam.cameraType != CameraType.SceneView) return;
+            DrawOverlay();
+        }
+
+        // URP/HDRP: fires per-camera — handle scene view only.
+        // In URP the game camera renders to an intermediate RT at this point (not the final
+        // game view surface), so game view is handled separately by endFrameRendering.
+        private static void OnSrpCameraRendering(ScriptableRenderContext ctx, Camera cam)
+        {
+            if (cam.cameraType != CameraType.SceneView) return;
+            DrawOverlay();
+        }
+
+        // URP/HDRP: fires once per frame after all cameras and the final screen blit,
+        // so GL commands here land on the game view surface.
+        private static void OnSrpEndFrame(ScriptableRenderContext ctx, Camera[] cameras)
+            => DrawOverlay();
+
         // ── GL draw ───────────────────────────────────────────────────────────
 
-        private static void OnPostRender(Camera cam)
+        private static void DrawOverlay()
         {
+            if (!ShowGizmos)         return;
             if (_touches.Count == 0) return;
 
             EnsureMaterial();
@@ -82,16 +119,87 @@ namespace UniPeek
 
             foreach (var kvp in _touches)
             {
-                var tp = kvp.Value;
+                var   tp  = kvp.Value;
                 // Normalised y=0 is TOP; GL pixel matrix y=0 is BOTTOM — flip Y.
-                float sx = tp.NormalizedPos.x * Screen.width;
-                float sy = (1f - tp.NormalizedPos.y) * Screen.height;
+                float sx  = tp.NormalizedPos.x * Screen.width;
+                float sy  = (1f - tp.NormalizedPos.y) * Screen.height;
+                var   pos = new Vector2(sx, sy);
 
-                DrawFilledCircle(new Vector2(sx, sy), 26f, new Color(1f, 0.35f, 0.25f, 0.45f));
-                DrawCircleOutline(new Vector2(sx, sy), 26f, new Color(1f, 1f, 1f, 0.90f), 2.5f);
+                DrawFilledCircle(pos, 26f, new Color(1f, 0.35f, 0.25f, 0.45f));
+                DrawCircleOutline(pos, 26f, new Color(1f, 1f, 1f, 0.90f), 2.5f);
+                DrawFingerIndex(pos, kvp.Key);
             }
 
             GL.PopMatrix();
+        }
+
+        // ── Finger index ──────────────────────────────────────────────────────
+
+        private static void DrawFingerIndex(Vector2 center, int fingerId)
+        {
+            // Clamp to single digit for display. Finger IDs rarely exceed 9.
+            int digit = Mathf.Clamp(fingerId % 10, 0, 9);
+            // Digit bounding box: 7px wide × 12px tall, centered on the circle.
+            const float dw = 7f, dh = 12f, dt = 1.5f;
+            // topLeft.y is the TOP of the bounding box in GL coords (higher y = higher on screen).
+            var topLeft = new Vector2(center.x - dw * 0.5f, center.y + dh * 0.5f);
+            DrawSegmentDigit(topLeft, digit, dw, dh, dt, new Color(1f, 1f, 1f, 0.95f));
+        }
+
+        // ── 7-segment digit ───────────────────────────────────────────────────
+
+        // Segment order: top(0), topLeft(1), topRight(2), middle(3),
+        //                botLeft(4), botRight(5), bottom(6)
+        private static readonly bool[][] s_DigitSegs =
+        {
+            new[] { true,  true,  true,  false, true,  true,  true  }, // 0
+            new[] { false, false, true,  false, false, true,  false }, // 1
+            new[] { true,  false, true,  true,  true,  false, true  }, // 2
+            new[] { true,  false, true,  true,  false, true,  true  }, // 3
+            new[] { false, true,  true,  true,  false, true,  false }, // 4
+            new[] { true,  true,  false, true,  false, true,  true  }, // 5
+            new[] { true,  true,  false, true,  true,  true,  true  }, // 6
+            new[] { true,  false, true,  false, false, true,  false }, // 7
+            new[] { true,  true,  true,  true,  true,  true,  true  }, // 8
+            new[] { true,  true,  true,  true,  false, true,  true  }, // 9
+        };
+
+        /// <summary>
+        /// Draws a 7-segment digit via GL.
+        /// <paramref name="topLeft"/>.y is the TOP of the bounding box in GL pixel-matrix coords
+        /// (y=0 bottom, y=Screen.height top), so top = highest y value.
+        /// </summary>
+        private static void DrawSegmentDigit(Vector2 topLeft, int digit, float w, float h, float t, Color c)
+        {
+            float x   = topLeft.x;
+            float top = topLeft.y;        // top edge   (higher y)
+            float bot = topLeft.y - h;    // bottom edge (lower y)
+            float mid = topLeft.y - h * 0.5f;
+
+            var segs = s_DigitSegs[digit];
+            GL.Begin(GL.TRIANGLES);
+            GL.Color(c);
+            //              x            y                      w          h
+            if (segs[0]) FillRect(x + t,       top - t,       w - 2*t,   t);                // top horiz
+            if (segs[1]) FillRect(x,            mid,            t,         top - t - mid);   // top-left vert
+            if (segs[2]) FillRect(x + w - t,   mid,            t,         top - t - mid);   // top-right vert
+            if (segs[3]) FillRect(x + t,       mid - t*0.5f,  w - 2*t,   t);                // middle horiz
+            if (segs[4]) FillRect(x,            bot + t,        t,         mid - t*0.5f - bot - t); // bot-left vert
+            if (segs[5]) FillRect(x + w - t,   bot + t,        t,         mid - t*0.5f - bot - t); // bot-right vert
+            if (segs[6]) FillRect(x + t,       bot,            w - 2*t,   t);                // bottom horiz
+            GL.End();
+        }
+
+        // Fills a rect as two triangles. Must be called inside GL.Begin(TRIANGLES) / GL.End().
+        private static void FillRect(float x, float y, float w, float h)
+        {
+            if (w <= 0 || h <= 0) return;
+            GL.Vertex3(x,     y,     0);
+            GL.Vertex3(x + w, y,     0);
+            GL.Vertex3(x + w, y + h, 0);
+            GL.Vertex3(x,     y,     0);
+            GL.Vertex3(x + w, y + h, 0);
+            GL.Vertex3(x,     y + h, 0);
         }
 
         // ── Primitives ────────────────────────────────────────────────────────

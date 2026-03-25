@@ -38,9 +38,11 @@ Stream the Unity Game View to the **UniPeek app** on your iOS or Android device 
 
 Requires **.NET Standard 2.1** API Compatibility Level (`Edit → Project Settings → Player → Other Settings → Api Compatibility Level`).
 
-**Required for input injection:**
+**Input injection:**
 
-- `com.unity.inputsystem` — must be installed for any touch, multi-touch, gyroscope, or accelerometer injection. The Legacy Input Manager alone is **not supported**.
+- **Legacy Input Manager** — single touch works via internal reflection (`Input.SimulateTouch`). Best-effort; gyroscope and accelerometer are not available.
+- **New Input System** (`com.unity.inputsystem`) — full touch, multi-touch, gyroscope, and accelerometer injection via virtual devices. Recommended.
+- **Both** — UniPeek injects into both backends simultaneously.
 
 **Optional:**
 
@@ -176,7 +178,9 @@ Ensure you have `com.unity.inputsystem` in your `Packages/manifest.json`.
 
 ### Legacy Input Manager
 
-The Legacy Input Manager alone is **not supported**. Input injection requires the new Input System to be active (either as the only active backend, or alongside Legacy via the *Both* setting in Player Settings).
+Single touch injection is supported via internal Unity reflection (`Input.SimulateTouch(Touch)`). This is best-effort and may break on future Unity versions. Gyroscope and accelerometer injection are **not available** in Legacy mode — use the new Input System for those.
+
+When **Active Input Handling** is set to **Both**, UniPeek injects into the Legacy Input Manager and the new Input System at the same time.
 
 ---
 
@@ -202,7 +206,7 @@ The Legacy Input Manager alone is **not supported**. Input injection requires th
 | Phone can't find host via mDNS | Make sure both are on the same subnet. Some corporate Wi-Fi isolates clients — try the QR code or Reverse Connection mode instead. |
 | Firewall rule prompt never appears | Click **Reset FW** in the UniPeek toolbar, then Start Streaming again. |
 | Game View is black / null capture | Open a **Game** tab in the Editor and make sure it is visible (not behind other panels). In Edit Mode, ensure a camera tagged `MainCamera` exists. |
-| Touch events not registering | Enable the **Input System** package (`com.unity.inputsystem`) for reliable injection. |
+| Touch events not registering | Check **Active Input Handling** in Player Settings. Legacy mode uses best-effort reflection. For guaranteed injection, install `com.unity.inputsystem` and set to **Input System Package** or **Both**. |
 | High encode latency | Switch Capture Method to **Async GPU Readback**, lower Quality, or reduce Resolution. |
 | Stream drops on recompile | Disable **Run in Play Mode** so the stream persists across domain reloads. |
 | WebRTC offer/answer hangs | Ensure `com.unity.webrtc` ≥ 3.0.0 is installed. Fall back to WebSocket mode if WebRTC is unavailable. |

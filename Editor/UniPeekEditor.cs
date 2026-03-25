@@ -36,6 +36,8 @@ namespace UniPeek
         private GUIStyle _versionStyle;
         private GUIStyle _statusTextStyle;
         private GUIStyle _sectionLabelStyle;
+        private GUIStyle _infoIconStyle;
+        private GUIStyle _tooltipBoxStyle;
         private bool     _stylesInitialized;
 
         // ── Assets ────────────────────────────────────────────────────────────
@@ -48,6 +50,9 @@ namespace UniPeek
         // ── Port ──────────────────────────────────────────────────────────────
         private int _port = UniPeekConstants.DefaultPort;
 
+        // ── Package install ───────────────────────────────────────────────────
+        private bool _webRtcInstallRequested;
+
         // ── Network interface selection ───────────────────────────────────────
         private int      _nicIndex;            // 0 = Auto, 1..n = specific interface
         private string[] _nicLabels = System.Array.Empty<string>();
@@ -55,6 +60,9 @@ namespace UniPeek
 
         // ── Scroll ────────────────────────────────────────────────────────────
         private Vector2 _scrollPos;
+
+        // ── Tooltip ───────────────────────────────────────────────────────────
+        private string _hoveredTooltip;
 
         // ── Colors ────────────────────────────────────────────────────────────
         private static readonly Color ColGreen = new(0.18f, 0.80f, 0.32f);
@@ -158,6 +166,7 @@ namespace UniPeek
         private void OnGUI()
         {
             InitStyles();
+            _hoveredTooltip = null;
 
             DrawHeader();
 
@@ -186,6 +195,7 @@ namespace UniPeek
 
             GUILayout.FlexibleSpace();
             DrawFooter();
+            DrawTooltipOverlay();
         }
 
         // ── Header ────────────────────────────────────────────────────────────
@@ -340,9 +350,12 @@ namespace UniPeek
 
         private void DrawSettings()
         {
+            // ── Editor Name ────────────────────────────────────────────────────
             using (new EditorGUILayout.HorizontalScope())
             {
-                _editorName = EditorGUILayout.TextField("Editor Name", _editorName);
+                OptionLabel("Editor Name",
+                    "Display name shown in the UniPeek app's device list.\nDefaults to your machine name.");
+                _editorName = EditorGUILayout.TextField(_editorName, GUILayout.ExpandWidth(true));
                 if (GUILayout.Button("Set", EditorStyles.miniButton, GUILayout.Width(32f)))
                 {
                     SavePrefs();
@@ -350,84 +363,120 @@ namespace UniPeek
                 }
             }
 
+            // ── Run in Play Mode ───────────────────────────────────────────────
+            int pmIndex;
             EditorGUI.BeginChangeCheck();
-            var pmIndex = EditorGUILayout.Popup("Run in Play Mode", _requirePlayMode ? 0 : 1,
-                new[] { "True", "False" });
+            using (new EditorGUILayout.HorizontalScope())
+            {
+                OptionLabel("Run in Play Mode",
+                    "On: streaming only runs while the Editor is in Play Mode.\nOff: streams in Edit + Play Mode (briefly drops on script recompile).");
+                pmIndex = EditorGUILayout.Popup(_requirePlayMode ? 0 : 1,
+                    new[] { "True", "False" }, GUILayout.ExpandWidth(true));
+            }
             if (EditorGUI.EndChangeCheck())
             {
                 _requirePlayMode = pmIndex == 0;
                 SavePrefs();
             }
-
             if (!_requirePlayMode)
             {
-                GUILayout.Space(4f);
+                GUILayout.Space(2f);
                 EditorGUILayout.HelpBox(
                     "Recompiling will cut the connection. Pro users have automatic reconnect. " +
-                    "Enabling 'Only run in Play Mode' avoids interruptions.",
+                    "Enabling 'Run in Play Mode' avoids interruptions.",
                     MessageType.Info);
             }
 
+            // ── Auto Start on Play Mode ────────────────────────────────────────
             GUILayout.Space(4f);
+            bool newAutoStart;
             EditorGUI.BeginChangeCheck();
-            var newAutoStart = EditorGUILayout.Toggle("Auto Start on Play Mode", _autoStartOnPlayMode);
+            using (new EditorGUILayout.HorizontalScope())
+            {
+                OptionLabel("Auto Start on Play Mode",
+                    "Automatically starts streaming when entering Play Mode and stops when exiting.");
+                newAutoStart = EditorGUILayout.Toggle(_autoStartOnPlayMode, GUILayout.ExpandWidth(true));
+            }
             if (EditorGUI.EndChangeCheck())
             {
                 _autoStartOnPlayMode = newAutoStart;
                 SavePrefs();
             }
-            if (_autoStartOnPlayMode)
-            {
-                GUILayout.Space(2f);
-                EditorGUILayout.HelpBox(
-                    "Streaming starts automatically when Play Mode begins and stops when it ends.",
-                    MessageType.None);
-            }
 
+            // ── Socket Mode ────────────────────────────────────────────────────
             GUILayout.Space(4f);
 #if UNITY_WEBRTC
             EditorGUI.BeginChangeCheck();
-            _socketMode = (SocketMode)EditorGUILayout.EnumPopup("Socket Mode", _socketMode);
+            using (new EditorGUILayout.HorizontalScope())
+            {
+                OptionLabel("Socket Mode",
+                    "WebSocket: JPEG frames over WebSocket — works on all setups.\nWebRTC: low-latency peer-to-peer video; requires com.unity.webrtc ≥ 3.0.0.");
+                _socketMode = (SocketMode)EditorGUILayout.EnumPopup(_socketMode, GUILayout.ExpandWidth(true));
+            }
             if (EditorGUI.EndChangeCheck())
                 SavePrefs();
 #else
-            EditorGUI.BeginDisabledGroup(true);
-            EditorGUILayout.EnumPopup("Socket Mode", SocketMode.WebSocket);
-            EditorGUI.EndDisabledGroup();
-            EditorGUILayout.HelpBox("Install com.unity.webrtc to enable WebRTC mode.", MessageType.None);
+            using (new EditorGUILayout.HorizontalScope())
+            {
+                OptionLabel("Socket Mode",
+                    "WebRTC mode requires the com.unity.webrtc package (≥ 3.0.0).\nClick 'Add' to install it via the Package Manager.");
+                EditorGUI.BeginDisabledGroup(true);
+                EditorGUILayout.EnumPopup(SocketMode.WebSocket, GUILayout.ExpandWidth(true));
+                EditorGUI.EndDisabledGroup();
+                EditorGUI.BeginDisabledGroup(_webRtcInstallRequested);
+                if (GUILayout.Button(_webRtcInstallRequested ? "Adding…" : "Add",
+                        EditorStyles.miniButton, GUILayout.Width(54f)))
+                {
+                    _webRtcInstallRequested = true;
+                    UnityEditor.PackageManager.Client.Add("https://github.com/TolgaDurman/com.unity.webrtc.git");
+                }
+                EditorGUI.EndDisabledGroup();
+            }
 #endif
 
+            // ── Log Level ──────────────────────────────────────────────────────
             EditorGUI.BeginChangeCheck();
-            _logLevel = (LogLevel)EditorGUILayout.EnumPopup("Log Level", _logLevel);
+            using (new EditorGUILayout.HorizontalScope())
+            {
+                OptionLabel("Log Level",
+                    "Controls how much UniPeek writes to the Unity Console.\nNone: silent  |  Error: errors only  |  Warning: errors + warnings  |  All: full diagnostics.");
+                _logLevel = (LogLevel)EditorGUILayout.EnumPopup(_logLevel, GUILayout.ExpandWidth(true));
+            }
             if (EditorGUI.EndChangeCheck())
             {
                 UniPeekConstants.CurrentLogLevel = _logLevel;
                 SavePrefs();
             }
 
+            // ── Network Interface ──────────────────────────────────────────────
             GUILayout.Space(4f);
             DrawNetworkInterfaceDropdown();
 
+            // ── Capture Method ─────────────────────────────────────────────────
             GUILayout.Space(4f);
             var mgr = ConnectionManager.Instance;
+            CaptureMethod newMethod;
             EditorGUI.BeginChangeCheck();
-            var newMethod = (CaptureMethod)EditorGUILayout.EnumPopup("Capture Method", mgr.ActiveCaptureMethod);
+            using (new EditorGUILayout.HorizontalScope())
+            {
+                OptionLabel("Capture Method",
+                    "Camera Render: synchronous, works in Edit + Play Mode.\nAsync GPU Readback: non-blocking, ~1 frame of extra latency.");
+                newMethod = (CaptureMethod)EditorGUILayout.EnumPopup(mgr.ActiveCaptureMethod, GUILayout.ExpandWidth(true));
+            }
             if (EditorGUI.EndChangeCheck())
                 mgr.SetCaptureMethod(newMethod);
 
-            switch (mgr.ActiveCaptureMethod)
+            // ── Touch Gizmos ───────────────────────────────────────────────────
+            GUILayout.Space(4f);
+            EditorGUI.BeginChangeCheck();
+            using (new EditorGUILayout.HorizontalScope())
             {
-                case CaptureMethod.CameraRender:
-                    EditorGUILayout.HelpBox(
-                        "Camera.Render() → ReadPixels. Synchronous. Works in Edit + Play Mode.",
-                        MessageType.None);
-                    break;
-                case CaptureMethod.AsyncGPUReadback:
-                    EditorGUILayout.HelpBox(
-                        "Camera.Render() → AsyncGPUReadback. Non-blocking, ~1 frame extra latency.",
-                        MessageType.None);
-                    break;
+                OptionLabel("Show Touch Gizmos",
+                    "Draws touch-position circles on the Game View when the phone sends touch events.");
+                EditorGUILayout.Toggle(TouchGizmoOverlay.ShowGizmos, GUILayout.ExpandWidth(true));
             }
+            if (EditorGUI.EndChangeCheck())
+                TouchGizmoOverlay.ShowGizmos = !TouchGizmoOverlay.ShowGizmos;
         }
 
         // ── Network interface dropdown ────────────────────────────────────────
@@ -464,15 +513,21 @@ namespace UniPeek
 
         private void DrawNetworkInterfaceDropdown()
         {
+            int newIndex;
             EditorGUI.BeginChangeCheck();
-            _nicIndex = EditorGUILayout.Popup("Network Interface", _nicIndex, _nicLabels);
+            using (new EditorGUILayout.HorizontalScope())
+            {
+                OptionLabel("Network Interface",
+                    "Which network adapter UniPeek binds to.\nUse Auto for most setups. Change this if UniPeek advertises a virtual adapter (e.g. VPN or Hyper-V).");
+                newIndex = EditorGUILayout.Popup(_nicIndex, _nicLabels, GUILayout.ExpandWidth(true));
+            }
             if (EditorGUI.EndChangeCheck())
             {
+                _nicIndex = newIndex;
                 string selectedIP = _nicIndex == 0 ? string.Empty : _nicIPs[_nicIndex - 1];
                 NetworkInterfaceSelector.SaveIP(selectedIP);
                 QRCodeGenerator.Invalidate();
 
-                // Apply immediately: restart streaming with the new binding IP.
                 if (_streaming)
                 {
                     StopStreaming();
@@ -498,6 +553,7 @@ namespace UniPeek
 
             DrawSectionLabel("Connected Devices");
 
+            string toDisconnect = null;
             foreach (var d in devices)
             {
                 using var card = new EditorGUILayout.HorizontalScope(EditorStyles.helpBox);
@@ -509,7 +565,12 @@ namespace UniPeek
                 GUILayout.Label(
                     d.ConnectedAt.ToLocalTime().ToString("HH:mm:ss"),
                     EditorStyles.miniLabel, GUILayout.Width(52f));
+                if (GUILayout.Button("×", EditorStyles.miniButton, GUILayout.Width(20f)))
+                    toDisconnect = d.SessionId;
             }
+
+            if (toDisconnect != null)
+                ConnectionManager.Instance.DisconnectDevice(toDisconnect);
 
             GUILayout.Space(8f);
         }
@@ -552,6 +613,60 @@ namespace UniPeek
             using var row = new EditorGUILayout.HorizontalScope();
             GUILayout.Label(title.ToUpper(), _sectionLabelStyle);
             GUILayout.Space(4f);
+        }
+
+        /// <summary>
+        /// Draws a label column with a trailing (i) icon. Hover is detected manually
+        /// so Unity's native tooltip system is never triggered (avoids double tooltip).
+        /// </summary>
+        private void OptionLabel(string label, string tooltip)
+        {
+            GUILayout.Label(label, EditorStyles.label,
+                GUILayout.Width(EditorGUIUtility.labelWidth - 18f));
+            // No tooltip in GUIContent — we track hover ourselves to avoid Unity's native tooltip.
+            GUILayout.Label(new GUIContent("ⓘ"), _infoIconStyle,
+                GUILayout.Width(16f), GUILayout.Height(EditorGUIUtility.singleLineHeight));
+            if (Event.current.type == EventType.Repaint &&
+                GUILayoutUtility.GetLastRect().Contains(Event.current.mousePosition))
+            {
+                _hoveredTooltip = tooltip;
+            }
+            GUILayout.Space(2f);
+        }
+
+        /// <summary>
+        /// Draws a floating tooltip box near the mouse when hovering over an (i) icon.
+        /// Must be called at the very end of OnGUI.
+        /// </summary>
+        private void DrawTooltipOverlay()
+        {
+            if (string.IsNullOrEmpty(_hoveredTooltip)) return;
+
+            var   content = new GUIContent(_hoveredTooltip);
+            float maxW    = Mathf.Min(position.width - 24f, 260f);
+            float textH   = _tooltipBoxStyle.CalcHeight(content, maxW - 16f);
+            float height  = textH + 14f;
+            var   mp      = Event.current.mousePosition;
+
+            var rect = new Rect(mp.x + 16f, mp.y - height - 6f, maxW, height);
+            rect.x = Mathf.Clamp(rect.x, 4f, position.width  - maxW   - 4f);
+            rect.y = Mathf.Clamp(rect.y, 4f, position.height - height - 4f);
+
+            // Solid background — no transparency
+            var bgColor  = EditorGUIUtility.isProSkin
+                ? new Color(0.15f, 0.15f, 0.15f, 1f)
+                : new Color(0.90f, 0.90f, 0.90f, 1f);
+            var rimColor = EditorGUIUtility.isProSkin
+                ? new Color(0.40f, 0.40f, 0.40f, 1f)
+                : new Color(0.60f, 0.60f, 0.60f, 1f);
+
+            EditorGUI.DrawRect(rect, rimColor);
+            EditorGUI.DrawRect(new Rect(rect.x + 1, rect.y + 1, rect.width - 2, rect.height - 2), bgColor);
+
+            var textRect = new Rect(rect.x + 8f, rect.y + 7f, rect.width - 16f, textH);
+            GUI.Label(textRect, _hoveredTooltip, _tooltipBoxStyle);
+
+            Repaint();
         }
 
         private static void DrawColorDot(Color color, bool small = false)
@@ -599,6 +714,21 @@ namespace UniPeek
             {
                 fontStyle = FontStyle.Bold,
                 normal    = { textColor = new Color(0.50f, 0.50f, 0.50f) },
+            };
+
+            _infoIconStyle = new GUIStyle(EditorStyles.miniLabel)
+            {
+                fontSize  = 10,
+                alignment = TextAnchor.MiddleCenter,
+                padding   = new RectOffset(1, 1, 0, 1),
+                normal    = { textColor = new Color(0.40f, 0.75f, 1.00f) },
+            };
+
+            _tooltipBoxStyle = new GUIStyle(EditorStyles.label)
+            {
+                fontSize = 12,
+                wordWrap = true,
+                normal   = { textColor = EditorGUIUtility.isProSkin ? new Color(0.85f, 0.85f, 0.85f) : new Color(0.10f, 0.10f, 0.10f) },
             };
         }
 
