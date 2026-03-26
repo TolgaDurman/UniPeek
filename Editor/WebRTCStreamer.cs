@@ -52,6 +52,7 @@ namespace UniPeek
         private readonly int _height;
         private double _captureInterval; // seconds between frames = 1 / fpsCap
         private double _lastCaptureTime;
+        private int _maxBitrateKbps;
 
         // ── WebRTC objects ────────────────────────────────────────────────────
         private RTCPeerConnection _pc;
@@ -73,16 +74,26 @@ namespace UniPeek
         /// <param name="width">Video width (pixels). Defaults to 1280.</param>
         /// <param name="height">Video height (pixels). Defaults to 720.</param>
         /// <param name="fpsCap">Maximum capture rate (frames/second). Defaults to 30.</param>
-        public WebRTCStreamer(int width = 1280, int height = 720, int fpsCap = 30)
+        /// <param name="maxBitrateKbps">Maximum video bitrate in kbps. Defaults to 10 000 (10 Mbps).</param>
+        public WebRTCStreamer(int width = 1280, int height = 720, int fpsCap = 30,
+                              int maxBitrateKbps = UniPeekConstants.DefaultWebRtcMaxBitrateKbps)
         {
             _width           = width;
             _height          = height;
             _captureInterval = fpsCap > 0 ? 1.0 / fpsCap : 1.0 / 30.0;
+            _maxBitrateKbps  = maxBitrateKbps;
         }
 
         /// <summary>Updates the FPS cap. Takes effect on the next capture.</summary>
         public void SetFpsCap(int fpsCap)
             => _captureInterval = fpsCap > 0 ? 1.0 / fpsCap : 1.0 / 30.0;
+
+        /// <summary>Updates the maximum video bitrate and re-applies it to any active senders.</summary>
+        public void SetMaxBitrate(int kbps)
+        {
+            _maxBitrateKbps = kbps;
+            ApplyBitrateSettings();
+        }
 
         // ── Public API ────────────────────────────────────────────────────────
 
@@ -304,7 +315,28 @@ namespace UniPeek
         private void OnCaptureFrame(Texture2D tex)
         {
             if (_renderTexture != null)
-                Graphics.Blit(tex, _renderTexture);
+            {
+                if (QualitySettings.activeColorSpace == ColorSpace.Linear)
+                {
+                    // CaptureScreenshotAsTexture() returns a Texture2D whose pixel data
+                    // is already sRGB-encoded (captured from the display framebuffer) but
+                    // the Texture2D is NOT flagged as an sRGB texture — Unity treats it as
+                    // linear data.  A plain Graphics.Blit to our sRGB render texture would
+                    // therefore apply an unwanted linear→sRGB write-conversion on values
+                    // that are already sRGB, producing a double-encoded (washed-out /
+                    // over-bright) image.  Suppress the write-side conversion so the pixels
+                    // land verbatim; the sRGB read-conversion in LinearSafeFlipCopy then
+                    // produces the correct round-trip (sRGB→linear→sRGB) to the encoder.
+                    bool prev = GL.sRGBWrite;
+                    GL.sRGBWrite = false;
+                    Graphics.Blit(tex, _renderTexture);
+                    GL.sRGBWrite = prev;
+                }
+                else
+                {
+                    Graphics.Blit(tex, _renderTexture);
+                }
+            }
             UnityEngine.Object.DestroyImmediate(tex);
         }
 
@@ -407,10 +439,10 @@ namespace UniPeek
                 var parameters = sender.GetParameters();
                 if (parameters.encodings == null) continue;
                 foreach (var enc in parameters.encodings)
-                    enc.maxBitrate = 10_000_000; // 10 Mbps
+                    enc.maxBitrate = (ulong)(_maxBitrateKbps * 1000);
                 sender.SetParameters(parameters);
             }
-            UniPeekConstants.Log("[WebRTC] Bitrate cap set to 10 Mbps.");
+            UniPeekConstants.Log($"[WebRTC] Bitrate cap set to {_maxBitrateKbps} kbps.");
         }
 
         private void OnConnectionStateChange(RTCPeerConnectionState state)

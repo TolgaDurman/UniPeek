@@ -415,6 +415,23 @@ namespace UniPeek
             }
             if (EditorGUI.EndChangeCheck())
                 SavePrefs();
+
+            // ── WebRTC Max Bitrate ─────────────────────────────────────────────
+            GUILayout.Space(4f);
+            EditorGUI.BeginChangeCheck();
+            int currentMbps = ConnectionManager.Instance.Config.MaxBitrateKbps / 1000;
+            int newMbps;
+            using (new EditorGUILayout.HorizontalScope())
+            {
+                OptionLabel("Max Bitrate (Mbps)",
+                    "WebRTC maximum video bitrate.\nHigher = better quality but more bandwidth.\nRecommended: 5–20 Mbps on local Wi-Fi.");
+                newMbps = EditorGUILayout.IntSlider(currentMbps, 1, 50, GUILayout.ExpandWidth(true));
+            }
+            if (EditorGUI.EndChangeCheck())
+            {
+                ConnectionManager.Instance.SetWebRtcMaxBitrate(newMbps * 1000);
+                EditorPrefs.SetInt(UniPeekConstants.PrefWebRtcMaxBitrateKbps, newMbps * 1000);
+            }
 #else
             using (new EditorGUILayout.HorizontalScope())
             {
@@ -853,6 +870,8 @@ namespace UniPeek
             _logLevel            = (LogLevel)EditorPrefs.GetInt(UniPeekConstants.PrefLogLevel, (int)LogLevel.All);
             _port                = EditorPrefs.GetInt(UniPeekConstants.PrefPort, UniPeekConstants.DefaultPort);
             UniPeekConstants.CurrentLogLevel = _logLevel;
+            ConnectionManager.Instance.Config.MaxBitrateKbps = EditorPrefs.GetInt(
+                UniPeekConstants.PrefWebRtcMaxBitrateKbps, UniPeekConstants.DefaultWebRtcMaxBitrateKbps);
 
             // File takes priority — it's written synchronously so it's crash-safe.
             if (System.IO.File.Exists(EditorNameFilePath))

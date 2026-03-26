@@ -45,10 +45,11 @@ namespace UniPeek
     /// <summary>All runtime-adjustable streaming parameters.</summary>
     public sealed class StreamConfig
     {
-        public int Width   { get; set; } = 1280;
-        public int Height  { get; set; } = 720;
-        public int Quality { get; set; } = 75;
-        public int FpsCap  { get; set; } = 30;
+        public int Width          { get; set; } = 1280;
+        public int Height         { get; set; } = 720;
+        public int Quality        { get; set; } = 75;
+        public int FpsCap         { get; set; } = 30;
+        public int MaxBitrateKbps { get; set; } = UniPeekConstants.DefaultWebRtcMaxBitrateKbps;
     }
 
     // ── Manager ───────────────────────────────────────────────────────────────
@@ -315,6 +316,15 @@ namespace UniPeek
                 SetState(ConnectionState.Advertising);
             });
             _reverseClient.ConnectAsync();
+        }
+
+        /// <summary>Updates the WebRTC maximum video bitrate at runtime.</summary>
+        public void SetWebRtcMaxBitrate(int kbps)
+        {
+            Config.MaxBitrateKbps = kbps;
+#if UNITY_WEBRTC
+            _webRtcStreamer?.SetMaxBitrate(kbps);
+#endif
         }
 
         /// <summary>Switches the frame capture strategy at runtime.</summary>
@@ -672,6 +682,11 @@ namespace UniPeek
                         var a = UnityEngine.JsonUtility.FromJson<AccelMessage>(json);
                         InputInjector.InjectAccelerometer(a.x, a.y, a.z);
                         break;
+                    case "config":
+                        var cfg = UnityEngine.JsonUtility.FromJson<ConfigMessage>(json);
+                        UniPeekConstants.Log($"[WS] Received: {json}");
+                        OnConfigReceived(_webRtcSessionId ?? string.Empty, cfg);
+                        break;
                     case "ping":
                         // DataChannel ping — respond with pong so Flutter can measure RTT.
                         var p = UnityEngine.JsonUtility.FromJson<PingPongMessage>(json);
@@ -697,7 +712,7 @@ namespace UniPeek
             // Stop JPEG pipeline immediately — WebRTC will carry video.
             if (_capture != null) _capture.UseWebRTC = true;
 
-            _webRtcStreamer = new WebRTCStreamer(Config.Width, Config.Height, Config.FpsCap);
+            _webRtcStreamer = new WebRTCStreamer(Config.Width, Config.Height, Config.FpsCap, Config.MaxBitrateKbps);
 
             _webRtcStreamer.OfferReady += sdp =>
             {

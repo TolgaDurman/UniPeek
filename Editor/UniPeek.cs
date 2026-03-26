@@ -92,6 +92,12 @@ namespace UniPeek
         /// <summary>EditorPrefs key for the show-touch-gizmos toggle.</summary>
         public const string PrefShowTouchGizmos = "UniPeek_ShowTouchGizmos";
 
+        /// <summary>EditorPrefs key for the WebRTC maximum video bitrate in kbps.</summary>
+        public const string PrefWebRtcMaxBitrateKbps = "UniPeek_WebRtcMaxBitrateKbps";
+
+        /// <summary>Default WebRTC maximum video bitrate (10 Mbps).</summary>
+        public const int DefaultWebRtcMaxBitrateKbps = 10_000;
+
         // ── Runtime log level ─────────────────────────────────────────────────
         /// <summary>Active log verbosity. Set by the editor window; read by the log helpers below.</summary>
         public static LogLevel CurrentLogLevel { get; set; } = LogLevel.All;
