@@ -84,7 +84,7 @@ namespace UniPeek
         // Menu item
         // ─────────────────────────────────────────────────────────────────────
 
-        [MenuItem("Window/UniPeek Welcome")]
+        // [MenuItem("Window/UniPeek Welcome")]
         public static void Open()
         {
             var window = GetWindow<UniPeekWelcomeWindow>(
