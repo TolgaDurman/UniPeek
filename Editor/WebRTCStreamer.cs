@@ -268,6 +268,17 @@ namespace UniPeek
 
             while (!_disposed)
             {
+                if (!Application.isPlaying)
+                {
+                    if (_captureHelper != null)
+                    {
+                        UnityEngine.Object.DestroyImmediate(_captureHelper.gameObject);
+                        _captureHelper = null;
+                    }
+                    yield return null;
+                    continue;
+                }
+
                 // Respect the FPS cap — skip this tick if the interval hasn't elapsed.
                 double now = EditorApplication.timeSinceStartup;
                 if (now - _lastCaptureTime < _captureInterval)
@@ -277,37 +288,14 @@ namespace UniPeek
                 }
                 _lastCaptureTime = now;
 
-                if (Application.isPlaying)
+                if (_captureHelper == null)
                 {
-                    if (_captureHelper == null)
-                    {
-                        var go = new GameObject("[UniPeek] WebRTCCapture")
-                            { hideFlags = HideFlags.HideAndDontSave };
-                        _captureHelper         = go.AddComponent<CaptureHelper>();
-                        _captureHelper.OnFrame = OnCaptureFrame;
-                    }
-                    _captureHelper.RequestCapture();
+                    var go = new GameObject("[UniPeek] WebRTCCapture")
+                        { hideFlags = HideFlags.HideAndDontSave };
+                    _captureHelper         = go.AddComponent<CaptureHelper>();
+                    _captureHelper.OnFrame = OnCaptureFrame;
                 }
-                else
-                {
-                    if (_captureHelper != null)
-                    {
-                        UnityEngine.Object.DestroyImmediate(_captureHelper.gameObject);
-                        _captureHelper = null;
-                    }
-
-                    var cam = Camera.main;
-                    if (cam == null && Camera.allCameras.Length > 0)
-                        cam = Camera.allCameras[0];
-
-                    if (cam != null)
-                    {
-                        var prev = cam.targetTexture;
-                        cam.targetTexture = _renderTexture;
-                        cam.Render();
-                        cam.targetTexture = prev;
-                    }
-                }
+                _captureHelper.RequestCapture();
                 yield return null;
             }
         }

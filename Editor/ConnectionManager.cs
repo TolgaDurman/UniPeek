@@ -596,8 +596,18 @@ namespace UniPeek
                 // EditorPrefs and StartWebRTCNegotiation both require the main thread.
                 Enqueue(() =>
                 {
-                    if ((SocketMode)EditorPrefs.GetInt(UniPeekConstants.PrefSocketMode, (int)SocketMode.WebRTC) == SocketMode.WebRTC)
-                        StartWebRTCNegotiation(sessionId);
+                    var socketMode = (SocketMode)EditorPrefs.GetInt(UniPeekConstants.PrefSocketMode, (int)SocketMode.WebRTC);
+                    if (socketMode == SocketMode.WebRTC)
+                    {
+                        if (Application.isPlaying)
+                            StartWebRTCNegotiation(sessionId);
+                        else
+                            // WebRTC's sync-context callback loop only runs in play mode; starting
+                            // negotiation in edit mode causes native callbacks to post to a null or
+                            // idle context, crashing/freezing the editor.  Close the session so the
+                            // app reconnects cleanly once play mode begins.
+                            _wsServer?.CloseSession(sessionId);
+                    }
                     else
                         _wsServer?.CloseSession(sessionId);
                 });
