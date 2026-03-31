@@ -181,7 +181,7 @@ namespace UniPeek
                 var p  = pos;
                 EditorApplication.delayCall += () =>
                 {
-                    if (ts == null) return;
+                    if (ts == null || !ts.added) return;
                     InputSystem.QueueStateEvent(ts, new TouchState
                     {
                         touchId  = id,
