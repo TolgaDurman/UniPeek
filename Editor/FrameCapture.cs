@@ -172,8 +172,8 @@ namespace UniPeek
 
             if (Application.isPlaying)
             {
-                // ScreenCapture runs after WaitForEndOfFrame, so it includes
-                // Screen Space Overlay canvases and all post-processing.
+                // CaptureHelper uses ReadPixels from the framebuffer after
+                // WaitForEndOfFrame — includes Screen Space Overlay canvases.
                 if (_helper != null) _helper.RequestCapture();
             }
             else if (_method == CaptureMethod.AsyncGPUReadback)
@@ -234,8 +234,10 @@ namespace UniPeek
 
                     var prevActive = RenderTexture.active;
                     RenderTexture.active = rt;
-                    toEncode = new Texture2D(_targetWidth, _targetHeight, TextureFormat.RGB24, false,
-                        PlayerSettings.colorSpace == ColorSpace.Linear);
+                    // The sRGB RT already holds gamma-corrected bytes; ReadPixels copies them
+                    // as-is (no sRGB→linear conversion).  Mark the texture as non-linear so
+                    // EncodeToJPG doesn't apply a second gamma pass and whiten the image.
+                    toEncode = new Texture2D(_targetWidth, _targetHeight, TextureFormat.RGB24, false, false);
                     toEncode.ReadPixels(new Rect(0, 0, _targetWidth, _targetHeight), 0, 0);
                     toEncode.Apply();
                     RenderTexture.active = prevActive;
@@ -296,10 +298,10 @@ namespace UniPeek
                 cam.targetTexture = prevTarget;
 
                 RenderTexture.active = rt;
-                // In a Linear project ReadPixels converts the sRGB RT data back to linear, so
-                // mark the texture as linear=true so EncodeToJPG applies the sRGB gamma curve once.
-                toEncode = new Texture2D(_targetWidth, _targetHeight, TextureFormat.RGB24, false,
-                    PlayerSettings.colorSpace == ColorSpace.Linear);
+                // The sRGB RT already holds gamma-corrected bytes; ReadPixels copies them
+                // as-is (no sRGB→linear conversion).  Mark the texture as non-linear so
+                // EncodeToJPG doesn't apply a second gamma pass and whiten the image.
+                toEncode = new Texture2D(_targetWidth, _targetHeight, TextureFormat.RGB24, false, false);
                 toEncode.ReadPixels(new Rect(0, 0, _targetWidth, _targetHeight), 0, 0);
                 toEncode.Apply();
                 RenderTexture.active = prevActive;
@@ -354,7 +356,6 @@ namespace UniPeek
                 return;
             }
 
-            bool linearProject = PlayerSettings.colorSpace == ColorSpace.Linear;
             _asyncRequestInFlight = true;
 
             // Request non-blocking GPU→CPU readback. Callback fires on main thread.
@@ -369,7 +370,10 @@ namespace UniPeek
                 Texture2D tex = null;
                 try
                 {
-                    tex = new Texture2D(_targetWidth, _targetHeight, TextureFormat.RGB24, false, linearProject);
+                    // AsyncGPUReadback returns raw sRGB bytes from the sRGB RT (no color-space
+                    // conversion).  Mark the texture as non-linear so EncodeToJPG doesn't apply
+                    // a second gamma pass and whiten the image in linear color space projects.
+                    tex = new Texture2D(_targetWidth, _targetHeight, TextureFormat.RGB24, false, false);
                     tex.LoadRawTextureData(req.GetData<byte>());
                     tex.Apply();
 
@@ -429,7 +433,18 @@ namespace UniPeek
             yield return new WaitForEndOfFrame();
             _pending = false;
 
-            Texture2D tex = ScreenCapture.CaptureScreenshotAsTexture();
+            // ReadPixels from the screen framebuffer after all rendering is
+            // complete (includes Screen Space Overlay canvases and all
+            // post-processing).  The framebuffer stores the display-ready
+            // sRGB output, so we mark the texture as non-linear to prevent
+            // EncodeToJPG from applying a second gamma pass.  This also
+            // avoids the extra processing ScreenCapture.CaptureScreenshotAsTexture
+            // applies in Device Simulator mode which causes whitening in
+            // linear colour-space projects.
+            Texture2D tex = new Texture2D(Screen.width, Screen.height,
+                TextureFormat.RGB24, false, false);
+            tex.ReadPixels(new Rect(0, 0, Screen.width, Screen.height), 0, 0);
+            tex.Apply();
             try
             {
                 OnFrame?.Invoke(tex);

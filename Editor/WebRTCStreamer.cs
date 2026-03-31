@@ -306,17 +306,14 @@ namespace UniPeek
             {
                 if (QualitySettings.activeColorSpace == ColorSpace.Linear)
                 {
-                    // CaptureScreenshotAsTexture() returns a Texture2D whose pixel data
-                    // is already sRGB-encoded (captured from the display framebuffer) but
-                    // the Texture2D is NOT flagged as an sRGB texture — Unity treats it as
-                    // linear data.  A plain Graphics.Blit to our sRGB render texture would
-                    // therefore apply an unwanted linear→sRGB write-conversion on values
-                    // that are already sRGB, producing a double-encoded (washed-out /
-                    // over-bright) image.  Suppress the write-side conversion so the pixels
-                    // land verbatim; the sRGB read-conversion in LinearSafeFlipCopy then
-                    // produces the correct round-trip (sRGB→linear→sRGB) to the encoder.
+                    // The capture texture is correctly flagged as sRGB (linear=false),
+                    // so the GPU reads sRGB→linear on input.  Force GL.sRGBWrite=true so
+                    // the write side also applies linear→sRGB, giving a correct
+                    // sRGB→linear→sRGB round-trip into the render texture.
+                    // (In editor coroutine context GL.sRGBWrite defaults to false, so we
+                    // must set it explicitly.)
                     bool prev = GL.sRGBWrite;
-                    GL.sRGBWrite = false;
+                    GL.sRGBWrite = true;
                     Graphics.Blit(tex, _renderTexture);
                     GL.sRGBWrite = prev;
                 }
