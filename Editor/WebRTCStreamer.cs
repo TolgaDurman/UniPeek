@@ -63,6 +63,12 @@ namespace UniPeek
 
         private bool _disposed;
 
+        // ICE candidate buffer — candidates may arrive before the SDP answer is
+        // applied (SetRemoteDescription yields 1+ editor ticks).  Mirror what the
+        // Flutter side does: queue them and drain once the remote description is set.
+        private bool _remoteDescriptionSet;
+        private readonly List<RTCIceCandidate> _pendingCandidates = new();
+
         // Render texture fed directly to the VideoStreamTrack
         private RenderTexture _renderTexture;
 
@@ -188,7 +194,13 @@ namespace UniPeek
                 sdpMid        = sdpMid,
                 sdpMLineIndex = sdpMLineIndex,
             });
-            _pc.AddIceCandidate(c);
+            // Flutter may send candidates before SetRemoteDescriptionCoroutine finishes
+            // (it yields at least one editor tick). Buffer them and drain after the
+            // answer is applied — same pattern as Flutter's _pendingCandidates list.
+            if (!_remoteDescriptionSet)
+                _pendingCandidates.Add(c);
+            else
+                _pc.AddIceCandidate(c);
         }
 
         /// <summary>
@@ -223,6 +235,9 @@ namespace UniPeek
             // Do NOT use StopCoroutine — it sets m_Routine=null which causes a
             // NullReferenceException if MoveNext is still in the current frame's
             // EditorApplication.update snapshot.
+
+            _pendingCandidates.Clear();
+            _remoteDescriptionSet = false;
 
             if (_captureHelper != null)
             {
@@ -378,9 +393,18 @@ namespace UniPeek
             yield return op;
 
             if (op.IsError)
+            {
                 UniPeekConstants.LogError($"[WebRTC] SetRemoteDescription error: {op.Error.message}");
+            }
             else
+            {
                 UniPeekConstants.Log("[WebRTC] Remote answer accepted.");
+                _remoteDescriptionSet = true;
+                // Drain ICE candidates that arrived before the answer was processed.
+                foreach (var c in _pendingCandidates)
+                    _pc?.AddIceCandidate(c);
+                _pendingCandidates.Clear();
+            }
         }
 
         // ── Peer-connection callbacks ─────────────────────────────────────────
