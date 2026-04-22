@@ -179,7 +179,7 @@ namespace UniPeek
             {
                 var btnColor = GUI.backgroundColor;
                 GUI.backgroundColor = new Color(0.28f, 0.60f, 1.00f);
-                if (GUILayout.Button("▶   Serve & Open in Browser", GUILayout.Height(36f)))
+                if (GUILayout.Button("▶   Serve", GUILayout.Height(36f)))
                     ServeAndOpen();
                 GUI.backgroundColor = btnColor;
             }
@@ -324,7 +324,6 @@ namespace UniPeek
                 return;
             }
             _qrTexture = QRCodeGenerator.GenerateQRTexture(WebGLFileServer.LanUrl, pixelsPerModule: 8);
-            Application.OpenURL(WebGLFileServer.LanUrl);
         }
 
         private static void ResetState()

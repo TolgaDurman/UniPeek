@@ -13,6 +13,7 @@ namespace UniPeek
         private readonly int _port;
         private readonly string _machineName;
         private readonly string _localIp;
+        private readonly string _serviceType;
 
         private UdpClient _client;
         private CancellationTokenSource _cts;
@@ -36,10 +37,11 @@ namespace UniPeek
         private const uint SRV_TTL = 120;
         private const uint A_TTL = 120;
 
-        public MdnsAdvertiser(int port, string localIp, string displayName = null)
+        public MdnsAdvertiser(int port, string localIp, string displayName = null, string serviceType = "_unipeek._tcp")
         {
             _port = port;
             _localIp = localIp;
+            _serviceType = serviceType;
             _machineName = (string.IsNullOrWhiteSpace(displayName)
                     ? Environment.MachineName
                     : displayName)
@@ -94,7 +96,7 @@ namespace UniPeek
             _ = ListenLoop(_cts.Token);
             _ = AnnounceLoop(_cts.Token);
 
-            UniPeekConstants.Log($"[mDNS] Advertising {_machineName}._unipeek._tcp.local on {_localIp}:{_port}");
+            UniPeekConstants.Log($"[mDNS] Advertising {_machineName}.{_serviceType}.local on {_localIp}:{_port}");
         }
 
         // ─────────────────────────────────────────────
@@ -215,8 +217,8 @@ namespace UniPeek
             uint ttl(uint normal) =>
                 ttlOverride == uint.MaxValue ? normal : ttlOverride;
 
-            string instance = $"{_machineName}._unipeek._tcp.local.";
-            string serviceType = "_unipeek._tcp.local.";
+            string instance = $"{_machineName}.{_serviceType}.local.";
+            string serviceTypeFqdn = $"{_serviceType}.local.";
             string meta = "_services._dns-sd._udp.local.";
             string host = $"{_machineName}.local.";
 
@@ -234,12 +236,12 @@ namespace UniPeek
             // ─── ANSWERS ───
 
             var metaRdata = new List<byte>();
-            WriteName(metaRdata, serviceType);
+            WriteName(metaRdata, serviceTypeFqdn);
             WriteResource(buf, meta, DNS_TYPE_PTR, DNS_CLASS_IN, ttl(PTR_TTL), metaRdata);
 
             var ptrRdata = new List<byte>();
             WriteName(ptrRdata, instance);
-            WriteResource(buf, serviceType, DNS_TYPE_PTR, DNS_CLASS_IN, ttl(PTR_TTL), ptrRdata);
+            WriteResource(buf, serviceTypeFqdn, DNS_TYPE_PTR, DNS_CLASS_IN, ttl(PTR_TTL), ptrRdata);
 
             // ─── ADDITIONAL ───
 

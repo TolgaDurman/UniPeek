@@ -66,6 +66,9 @@ namespace UniPeek
                 try   { InjectTemplate(report.summary.outputPath); }
                 catch (Exception ex) { Debug.LogWarning($"[UniPeek] Template injection failed: {ex.Message}"); }
 
+                try   { WriteManifest(report.summary.outputPath); }
+                catch (Exception ex) { Debug.LogWarning($"[UniPeek] manifest.json write failed: {ex.Message}"); }
+
                 CurrentProgress = 1f;
                 CurrentStage    = "Done";
                 FinishProgress(Progress.Status.Succeeded);
@@ -176,11 +179,6 @@ namespace UniPeek
 
         // ── Template injection ────────────────────────────────────────────────
 
-        private static bool HasCustomTemplate() =>
-            File.Exists(Path.Combine(
-                Application.dataPath,
-                "Plugins", "UniPeek", "WebGLTemplates", "UniPeek", "index.html"));
-
         private static void InjectTemplate(string outputPath)
         {
             string templatePath = Path.Combine(
@@ -241,6 +239,51 @@ namespace UniPeek
 
             File.WriteAllText(indexPath, html);
         }
+
+        private static void WriteManifest(string outputPath)
+        {
+            var files = new List<string>();
+            long totalBytes = 0;
+
+            foreach (string file in Directory.GetFiles(outputPath, "*", SearchOption.AllDirectories))
+            {
+                string relative = file.Substring(outputPath.Length)
+                                     .TrimStart(Path.DirectorySeparatorChar, '/')
+                                     .Replace(Path.DirectorySeparatorChar, '/');
+
+                if (string.Equals(relative, "manifest.json", StringComparison.OrdinalIgnoreCase)) continue;
+
+                files.Add(relative);
+                totalBytes += new FileInfo(file).Length;
+            }
+
+            // Minimal hand-built JSON — avoids a dependency on Newtonsoft.Json.
+            var sb = new System.Text.StringBuilder();
+            sb.AppendLine("{");
+            sb.AppendLine($"  \"id\": \"{DateTime.UtcNow:yyyyMMddTHHmmssZ}\",");
+            sb.AppendLine($"  \"productName\": \"{EscapeJson(PlayerSettings.productName)}\",");
+            sb.AppendLine($"  \"companyName\": \"{EscapeJson(PlayerSettings.companyName)}\",");
+            sb.AppendLine($"  \"version\": \"{EscapeJson(PlayerSettings.bundleVersion)}\",");
+            sb.AppendLine($"  \"totalBytes\": {totalBytes},");
+            sb.AppendLine($"  \"files\": [");
+            for (int i = 0; i < files.Count; i++)
+            {
+                string comma = i < files.Count - 1 ? "," : "";
+                sb.AppendLine($"    \"{EscapeJson(files[i])}\"{comma}");
+            }
+            sb.AppendLine("  ]");
+            sb.Append("}");
+
+            File.WriteAllText(Path.Combine(outputPath, "manifest.json"), sb.ToString());
+            Debug.Log($"[UniPeek] manifest.json written → {files.Count} files, {totalBytes / 1024} KB");
+        }
+
+        private static string EscapeJson(string s) =>
+            (s ?? "").Replace("\\", "\\\\")
+             .Replace("\"", "\\\"")
+             .Replace("\n", "\\n")
+             .Replace("\r", "\\r")
+             .Replace("\t", "\\t");
 
         // ── Helpers ───────────────────────────────────────────────────────────
 

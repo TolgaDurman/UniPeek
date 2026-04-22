@@ -12,6 +12,7 @@ namespace UniPeek
         private static volatile HttpListener _listener;
         private static          Thread       _thread;
         private static volatile string       _rootPath;
+        private static volatile MdnsAdvertiser _webGlAdvertiser;
 
         public static string LanUrl    { get; private set; }
         public static int    Port      { get; private set; }
@@ -36,12 +37,18 @@ namespace UniPeek
             string ip = QRCodeGenerator.GetLocalIPv4();
             LanUrl = $"http://{ip}:{Port}";
 
+            _webGlAdvertiser = new MdnsAdvertiser(Port, ip, serviceType: "_unipeek-webgl._tcp");
+            _webGlAdvertiser.Start();
+
             _thread = new Thread(ListenerLoop) { IsBackground = true, Name = "UniPeek-WebGL-HTTP" };
             _thread.Start();
         }
 
         public static void Stop()
         {
+            _webGlAdvertiser?.Stop();
+            _webGlAdvertiser = null;
+
             _listener?.Stop();
             _listener?.Close();
             _listener = null;
