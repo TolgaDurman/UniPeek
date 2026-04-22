@@ -61,6 +61,11 @@ namespace UniPeek
         // ── Scroll ────────────────────────────────────────────────────────────
         private Vector2 _scrollPos;
 
+        // ── Tab ───────────────────────────────────────────────────────────
+        private int _activeTab;
+        private const string PrefActiveTab = "UniPeek_ActiveTab";
+        private static readonly string[] TabLabels = { "Stream", "Deploy" };
+
         // ── Tooltip ───────────────────────────────────────────────────────────
         private string _hoveredTooltip;
 
@@ -113,12 +118,23 @@ namespace UniPeek
             {
                 DoStartStreaming();
             }
+            DeployTab.OnEnable();
         }
 
         private void OnDisable()
         {
             UnsubscribeFromManager();
             EditorApplication.playModeStateChanged -= OnPlayModeChanged;
+            DeployTab.OnDisable();
+        }
+
+        private void OnInspectorUpdate()
+        {
+            if (_activeTab == 1 && (WebGLBuilder.IsBuilding || DeployTab.NeedsRepaint))
+            {
+                DeployTab.NeedsRepaint = false;
+                Repaint();
+            }
         }
 
         private void OnFocus()
@@ -170,32 +186,55 @@ namespace UniPeek
 
             DrawHeader();
 
-            using var scroll = new EditorGUILayout.ScrollViewScope(_scrollPos);
-            _scrollPos = scroll.scrollPosition;
-
-            GUILayout.Space(10f);
-            DrawStatusCard();
-            GUILayout.Space(10f);
-            DrawMainButton();
-            GUILayout.Space(8f);
-
-            DrawQRCode();
-
-            if (_streaming)
+            // Tab bar
+            int newTab = GUILayout.Toolbar(_activeTab, TabLabels);
+            if (newTab != _activeTab)
             {
-                DrawStatsBar();
-                GUILayout.Space(8f);
+                _activeTab = newTab;
+                EditorPrefs.SetInt(PrefActiveTab, _activeTab);
             }
 
-            DrawSectionLabel("Options");
-            DrawSettings();
-            GUILayout.Space(8f);
+            using (var scroll = new EditorGUILayout.ScrollViewScope(_scrollPos))
+            {
+                _scrollPos = scroll.scrollPosition;
 
-            DrawDeviceList();
+                if (_activeTab == 0)
+                {
+                    // ── Stream tab (existing content) ─────────────────────────────
+                    GUILayout.Space(10f);
+                    DrawStatusCard();
+                    GUILayout.Space(10f);
+                    DrawMainButton();
+                    GUILayout.Space(8f);
 
-            GUILayout.FlexibleSpace();
-            DrawFooter();
-            DrawTooltipOverlay();
+                    DrawQRCode();
+
+                    if (_streaming)
+                    {
+                        DrawStatsBar();
+                        GUILayout.Space(8f);
+                    }
+
+                    DrawSectionLabel("Options");
+                    DrawSettings();
+                    GUILayout.Space(8f);
+
+                    DrawDeviceList();
+
+                    GUILayout.FlexibleSpace();
+                    DrawFooter();
+                }
+                else
+                {
+                    // ── Deploy tab ────────────────────────────────────────────────
+                    DeployTab.DrawGUI(position.width);
+                    GUILayout.FlexibleSpace();
+                }
+            }
+
+            // DrawTooltipOverlay MUST be outside the ScrollViewScope — it uses raw window coords
+            if (_activeTab == 0)
+                DrawTooltipOverlay();
         }
 
         // ── Header ────────────────────────────────────────────────────────────
@@ -878,6 +917,7 @@ namespace UniPeek
                 _editorName = System.IO.File.ReadAllText(EditorNameFilePath);
             else
                 _editorName = EditorPrefs.GetString(UniPeekConstants.PrefEditorName, string.Empty);
+            _activeTab = EditorPrefs.GetInt(PrefActiveTab, 0);
         }
 
         private void SavePrefs()
@@ -896,6 +936,7 @@ namespace UniPeek
                 System.IO.File.WriteAllText(EditorNameFilePath, _editorName);
             }
             catch { /* non-critical */ }
+            EditorPrefs.SetInt(PrefActiveTab, _activeTab);
         }
     }
 }
